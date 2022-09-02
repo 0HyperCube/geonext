@@ -143,7 +143,7 @@ fn create_gl_context(window: &web_sys::Window, canvas: &web_sys::HtmlCanvasEleme
 #[wasm_bindgen]
 #[cfg(target_arch = "wasm32")]
 pub fn with_assets(asset_map: Map) -> Result<(), JsValue> {
-	use geonext_client::EventType;
+	use geonext_client::{EventType, UVec2};
 
 	loading_status("graphics");
 	let assets = extract_assets(asset_map);
@@ -157,8 +157,7 @@ pub fn with_assets(asset_map: Map) -> Result<(), JsValue> {
 	// Construct our application
 
 	let game_state = GameState {
-		width,
-		height,
+		viewport: UVec2::new(width, height),
 		scale_factor: 1.,
 		..Default::default()
 	};
