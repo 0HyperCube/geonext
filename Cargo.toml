@@ -1,0 +1,5 @@
+[workspace]
+members = ["geonext-client", "server", "wasm-frontend"]
+
+exclude = ["poisson", "femtovg"]
+

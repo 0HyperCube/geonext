@@ -1,0 +1,30 @@
+[package]
+name = "wasm-frontend"
+version = "0.0.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wasm-bindgen = "0.2.74"
+js-sys = "*"
+geonext_client = { path = "../geonext-client", version = "*" }
+glow = "*"
+log = "*"
+
+[dependencies.web-sys]
+version = "0.3.4"
+features = [
+  "Document",
+  "Element",
+  "HtmlCanvasElement",
+  "Window",
+  "WebGl2RenderingContext",
+  "WebGlContextAttributes",
+  "PointerEvent",
+  "WheelEvent",
+  "KeyboardEvent",
+]
+
+[lib]
+crate-type = ["cdylib"]

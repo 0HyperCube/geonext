@@ -1,0 +1,20 @@
+[package]
+name = "server"
+version = "0.0.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+notify = { git = "https://github.com/notify-rs/notify.git", optional = true }
+tide = { version = "*" }
+async-std = { version = "1.6.0", default-features = false, features = [
+	"async-global-executor",
+	"futures-lite",
+	"attributes"
+	] }
+
+[features]
+debugging = ["dep:notify"]
+default = ["debugging"]
+
