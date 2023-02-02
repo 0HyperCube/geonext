@@ -10,5 +10,5 @@ in vec4 vertexColour;
 
 void main()
 {
-	FragColor = vertexColour;
-} 
+	FragColor =  vertexColour;
+}

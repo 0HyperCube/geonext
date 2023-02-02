@@ -7,9 +7,10 @@ edition = "2021"
 
 
 [dependencies]
-glow = "0.11"
+glow = "0.12"
 log = "0.4"
-glam = "0.21"
+glam = "0.22"
 hecs = "0.9"
 random-fast-rng = { version = "0.1.1", default-features = false }
 image = { version = "0.24.0", default-features = false, features = ["jpeg"] }
+fontdue = "0.7"

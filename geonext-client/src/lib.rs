@@ -93,6 +93,7 @@ impl Application {
 		game_state.terrain.load(&assets.get("heightmap"));
 		let (vertices, indices) = game_state.terrain.generate_terrain();
 		renderer.init(&vertices, &indices)?;
+		renderer.font.load_glyphs("nicht maßstäblich", &assets, "regular");
 
 		let mut input_layers = Default::default();
 		game_state.init(&mut input_layers);
@@ -136,6 +137,7 @@ impl Application {
 #[derive(Debug)]
 pub enum ErrorKind {
 	CreateBuffer(String),
+	CreateTexture(String),
 	ShaderCompileError(String),
 	ProgramLinkError(String),
 	VertexArray(String),
@@ -149,6 +151,7 @@ impl core::fmt::Display for ErrorKind {
 			"{}",
 			match self {
 				ErrorKind::CreateBuffer(x) => x,
+				ErrorKind::CreateTexture(x) => x,
 				ErrorKind::ShaderCompileError(x) => x,
 				ErrorKind::ProgramLinkError(x) => x,
 				ErrorKind::VertexArray(x) => x,

@@ -7,28 +7,39 @@ use crate::{ErrorKind, GameState};
 
 mod program;
 use program::*;
+mod atlas;
+pub mod text;
+
+pub struct Programs {
+	scene_program: Program,
+	ui_program: Program,
+	text_program: Program,
+}
 
 /// Contains the glow opengl state
 pub struct OpenGl {
 	vert_arr: Option<<glow::Context as glow::HasContext>::VertexArray>,
 	vert_buff: Option<<glow::Context as glow::HasContext>::Buffer>,
-	indies_count: usize,
-	program: Option<Program>,
+	indicies_count: usize,
+	programs: Option<Programs>,
 	//framebuffers: FnvHashMap<ImageId, Result<Framebuffer, ErrorKind>>,
 	context: Rc<glow::Context>,
 	screen_target: Option<Framebuffer>,
+	pub font: text::FontCache,
 }
 
 impl OpenGl {
 	/// Construct a new opengl state based on the specified context
 	pub fn new(context: glow::Context) -> Self {
+		let context = Rc::new(context);
 		Self {
 			vert_arr: None,
 			vert_buff: None,
-			indies_count: 0,
-			program: None,
-			context: Rc::new(context),
+			indicies_count: 0,
+			programs: None,
+			context: context.clone(),
 			screen_target: None,
+			font: text::FontCache::new(context),
 		}
 	}
 
@@ -36,6 +47,8 @@ impl OpenGl {
 	pub fn init(&mut self, verts: &[f32], indices: &[usize]) -> Result<(), ErrorKind> {
 		unsafe {
 			self.context.enable(glow::DEPTH_TEST);
+			self.context.enable(glow::BLEND);
+			self.context.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
 			info!(
 				"Shading language version: {}\nMax vertex attributes: {}\nVendor: {}\nVersion: {}",
 				self.context.get_parameter_string(glow::SHADING_LANGUAGE_VERSION),
@@ -45,11 +58,20 @@ impl OpenGl {
 			);
 		};
 
-		// Load shaders and link them into a shader program
+		self.font.init()?;
 
-		let frag = Shader::new(self.context.clone(), glow::FRAGMENT_SHADER, include_str!("../assets/shaders/frag.glsl"))?;
-		let vert = Shader::new(self.context.clone(), glow::VERTEX_SHADER, include_str!("../assets/shaders/vert.glsl"))?;
-		let program = Program::new(self.context.clone(), &[frag, vert], &[])?;
+		// Load shaders and link them into a shader program
+		let frag = Shader::new(self.context.clone(), glow::FRAGMENT_SHADER, include_str!("../assets/shaders/scene-fs.glsl"))?;
+		let vert = Shader::new(self.context.clone(), glow::VERTEX_SHADER, include_str!("../assets/shaders/scene-vs.glsl"))?;
+		let scene_program = Program::new(self.context.clone(), &[frag, vert], &[])?;
+
+		let frag = Shader::new(self.context.clone(), glow::FRAGMENT_SHADER, include_str!("../assets/shaders/text-fs.glsl"))?;
+		let vert = Shader::new(self.context.clone(), glow::VERTEX_SHADER, include_str!("../assets/shaders/text-vs.glsl"))?;
+		let text_program = Program::new(self.context.clone(), &[frag, vert], &[])?;
+
+		let frag = Shader::new(self.context.clone(), glow::FRAGMENT_SHADER, include_str!("../assets/shaders/text-fs.glsl"))?;
+		let vert = Shader::new(self.context.clone(), glow::VERTEX_SHADER, include_str!("../assets/shaders/text-vs.glsl"))?;
+		let ui_program = Program::new(self.context.clone(), &[frag, vert], &[])?;
 
 		unsafe {
 			// debug_assert_eq!(core::mem::size_of::<Vec3>(), core::mem::size_of::<f32>() * 3);
@@ -64,7 +86,7 @@ impl OpenGl {
 			// ];
 
 			//let indices = [0_usize, 1, 3];
-			self.indies_count = indices.len();
+			self.indicies_count = indices.len();
 			let (_, indices_data, _) = indices.align_to();
 			let (_, vert_data, _) = verts.align_to();
 
@@ -105,7 +127,11 @@ impl OpenGl {
 			// Store state
 			self.vert_arr = Some(vertex_array);
 			self.vert_buff = Some(vertex_buffer);
-			self.program = Some(program);
+			self.programs = Some(Programs {
+				scene_program,
+				ui_program,
+				text_program,
+			});
 		}
 
 		Ok(())
@@ -113,24 +139,29 @@ impl OpenGl {
 
 	/// Renders a frame
 	pub fn rerender(&mut self, game_state: &GameState) {
-		if let (Some(vertex_array), Some(program)) = (self.vert_arr, &self.program) {
+		if let (Some(vertex_array), Some(programs)) = (self.vert_arr, &self.programs) {
+			let Programs {
+				scene_program,
+				ui_program,
+				text_program,
+			} = programs;
 			unsafe {
 				self.context.clear_color(0.207843137, 0.207843137, 0.207843137, 1.);
 				self.context.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
 
-				program.bind();
-				program.set_vec4("addColour", Vec4::ZERO);
+				scene_program.bind();
+				scene_program.set_vec4("addColour", Vec4::ZERO);
 
 				let projection = Mat4::perspective_rh_gl(45f32.to_radians(), game_state.aspect_ratio(), 0.1, 1000.);
 				let view = game_state.camera.to_matrix(&game_state.terrain);
 				let model = Mat4::from_rotation_x(0.);
 
-				program.set_mat4("projection", projection);
-				program.set_mat4("view", view);
-				program.set_mat4("model", model);
+				scene_program.set_mat4("projection", projection);
+				scene_program.set_mat4("view", view);
+				scene_program.set_mat4("model", model);
 
 				self.context.bind_vertex_array(Some(vertex_array));
-				self.context.draw_elements(glow::TRIANGLES, self.indies_count as i32, glow::UNSIGNED_INT, 0);
+				self.context.draw_elements(glow::TRIANGLES, self.indicies_count as i32, glow::UNSIGNED_INT, 0);
 			}
 		}
 	}
