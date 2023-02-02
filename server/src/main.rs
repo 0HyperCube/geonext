@@ -17,19 +17,32 @@ struct State {
 	absolute_owned_client_path: PathBuf,
 }
 
+fn compute_path() -> PathBuf {
+	let geonext_path = if let Some(last_argument) = std::env::args().last() {
+		let user_inputted_path = std::path::Path::new(&last_argument);
+		if user_inputted_path.is_absolute() {
+			user_inputted_path.to_owned()
+		} else {
+			let current_dir = std::env::current_dir().unwrap();
+			current_dir.join(user_inputted_path)
+		}
+	} else {
+		std::env::current_exe().unwrap()
+	};
+	for ancestor in geonext_path.ancestors() {
+		if ancestor.ends_with("geonext") {
+			return ancestor.to_path_buf().join("wasm-frontend");
+		}
+	}
+	geonext_path.join("wasm-frontend")
+}
+
 // Because we're running a web server we need a runtime,
 // for more information on async runtimes, please check out [async-std](https://github.com/async-rs/async-std)
 #[async_std::main]
 async fn main() -> tide::Result<()> {
 	// Extract the path from the command line args
-	let last_argument = std::env::args().last().unwrap();
-	let user_inputted_path = std::path::Path::new(&last_argument);
-	let absolute_owned_client_path = if user_inputted_path.is_absolute() {
-		user_inputted_path.to_owned()
-	} else {
-		let p = std::env::current_dir().unwrap();
-		p.join(user_inputted_path)
-	};
+	let absolute_owned_client_path = compute_path();
 
 	compile_client(std::path::Path::new(&absolute_owned_client_path));
 
@@ -60,6 +73,29 @@ async fn main() -> tide::Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "debugging")]
+fn add_hot_reload_javascript(mut body: String) -> String {
+	// Remove the closing tags from the document (to allow js to be inserted in firefox)
+	for closing_tag in ["</body>", "</html>"] {
+		if let Some(pos) = body.find(closing_tag) {
+			for _ in 0..closing_tag.len() {
+				body.remove(pos);
+			}
+		}
+	}
+
+	// Insert some hotreload js
+	body += r#"<!--Inserted hotreload script--> <script type="module">try {
+			console.info("initalised hotreaload");
+			await fetch("__reload")
+			console.info("hotreloading")
+			window.location.reload(true);
+		} catch (e){
+			console.warn("Failed to wait for hotreload.");
+		}</script>"#;
+	body
+}
+
 /// Returns the index.html file, inserting a hot reload script if debug is enabled
 async fn get_index(req: Request<State>) -> tide::Result {
 	let mut owned_client_path = req.state().absolute_owned_client_path.clone();
@@ -70,33 +106,34 @@ async fn get_index(req: Request<State>) -> tide::Result {
 	res.set_content_type("text/html;charset=utf-8");
 
 	#[cfg(feature = "debugging")]
-	{
-		let mut body = read_to_string(path).await.unwrap();
+	res.set_body(add_hot_reload_javascript(read_to_string(path).await.unwrap()));
 
-		// Remove the closing tags from the document (to allow js to be inserted in firefox)
-		for closing_tag in ["</body>", "</html>"] {
-			if let Some(pos) = body.find(closing_tag) {
-				for _ in 0..closing_tag.len() {
-					body.remove(pos);
-				}
-			}
-		}
-
-		// Insert some hotreload js (why we don't bank on http)
-		body += r#"<!--Inserted hotreload script--> <script type="module">try {
-			console.info("initalised hotreaload");
-			await fetch("__reload")
-			console.info("hotreloading")
-			window.location.reload(true);
-		}catch (e){
-			console.warn("Failed to wait for hotreload.");
-		}</script>"#;
-		res.set_body(body);
-	}
 	#[cfg(not(feature = "debugging"))]
 	res.set_body(read_to_string(path).await.unwrap());
 
 	Ok(res)
+}
+
+#[cfg(feature = "debugging")]
+fn process_file_watcher_event(result: Result<Event, notify::Error>, absolute_owned_client_path: &PathBuf, hot_reload_sender: &Sender<()>) {
+	let event = result.unwrap();
+
+	// Skip non-modify events or events in ignored files like `.lock` `target/` or `/pkg/`
+	let is_reload = event.kind.is_modify()
+		&& event.paths.iter().any(|path| {
+			let string = path.to_string_lossy();
+			!string.contains("target/") && !string.contains(".lock") && !string.contains("/pkg/") && !string.contains(".git")
+		});
+	if is_reload {
+		// Clear screen
+		print!("\x1B[2J\x1B[1;1H");
+
+		println!("Live refresh of: {}", event.paths.iter().filter_map(|path| path.to_str()).collect::<Vec<_>>().join(", "));
+
+		if compile_client(std::path::Path::new(&absolute_owned_client_path)) {
+			let _ = hot_reload_sender.send_blocking(());
+		}
+	}
 }
 
 #[cfg(feature = "debugging")]
@@ -108,29 +145,8 @@ fn initalise_filewatcher(absolute_owned_client_path: PathBuf) -> notify::Result<
 
 	// Create channel for sending reload events to clients
 	let (hot_reload_sender, hot_reload_reciever) = bounded(1);
-	let mut watcher = RecommendedWatcher::new(
-		move |result: Result<Event, notify::Error>| {
-			let event = result.unwrap();
-
-			// Skip non-modify events or events in ignored files like `.lock` `target/` or `/pkg/`
-			let is_reload = event.kind.is_modify()
-				&& event.paths.iter().any(|path| {
-					let string = path.to_string_lossy();
-					!string.contains("target/") && !string.contains(".lock") && !string.contains("/pkg/")
-				});
-			if is_reload {
-				// Clear screen
-				print!("\x1B[2J\x1B[1;1H");
-
-				println!("Live refresh {:?}", event.paths);
-
-				if compile_client(std::path::Path::new(&absolute_owned_client_path)) {
-					let _ = hot_reload_sender.send_blocking(());
-				}
-			}
-		},
-		notify::Config::default(),
-	)?;
+	let event_handler = move |result: Result<Event, notify::Error>| process_file_watcher_event(result, &absolute_owned_client_path, &hot_reload_sender);
+	let mut watcher = RecommendedWatcher::new(event_handler, notify::Config::default())?;
 
 	watcher.watch(watch, RecursiveMode::Recursive)?;
 	println!("Watching directory {:?}", watch);
@@ -155,7 +171,7 @@ fn compile_client(path: &std::path::Path) -> bool {
 	use std::io::{self, Write};
 	use std::process::{Command, Stdio};
 
-	println!("Building {:?}", path);
+	println!("\n{}\n\nCompiling client at {}\n\n", "=".repeat(100), path.to_str().unwrap_or_default());
 
 	// Choose optimisation level based on the debugging feature
 	#[cfg(feature = "debugging")]
@@ -186,7 +202,7 @@ fn compile_client(path: &std::path::Path) -> bool {
 		return false;
 	}
 
-	println!("Serving on http://127.0.0.1:8080");
+	println!("\nServing on http://127.0.0.1:8080");
 
 	true
 }

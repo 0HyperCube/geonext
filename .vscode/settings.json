@@ -9,5 +9,5 @@
 	// VS Code config
 	"files.eol": "\n",
 	"files.insertFinalNewline": true,
-	"rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+	//"rust-analyzer.cargo.target": "wasm32-unknown-unknown",
 }

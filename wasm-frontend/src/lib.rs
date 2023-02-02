@@ -187,8 +187,9 @@ pub fn with_assets(asset_map: Map) -> Result<(), JsValue> {
 		// Update the application
 		APPLICATION_CELL.with(|cell| {
 			if let Some(application) = &mut *cell.borrow_mut() {
-				application.redraw(time as f32);
-				let text = format!("Peek {}ms", application.game_state.time.peak_frametime().round());
+				application.update(time as f32);
+				info!("Redraw {}", application.game_state.time.peak_frametime().round());
+				let text = format!("Peak: {}ms", application.game_state.time.peak_frametime().round());
 				textelement.set_text_content(Some(&text));
 			} else {
 				panic!("No app");

@@ -10,11 +10,16 @@ const OFFSET: Vec2 = Vec2::new(0., -20.);
 pub struct Camera {
 	pub position: Vec2,
 	pub zoom: f32,
+	pub velocity: Vec2,
 }
 
 impl Default for Camera {
 	fn default() -> Self {
-		Self { position: Vec2::ZERO, zoom: 1. }
+		Self {
+			position: Vec2::ZERO,
+			zoom: 1.,
+			velocity: Vec2::ZERO,
+		}
 	}
 }
 

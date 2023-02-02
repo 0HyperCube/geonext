@@ -22,7 +22,7 @@ impl Assets {
 		&[("regular", "assets/RobotoSlab-Regular.ttf"), ("heightmap", "assets/heightmap.jpeg")]
 	}
 	pub fn get<'a>(&'a self, asset: &'static str) -> &'a Vec<u8> {
-		self.0.get(asset).unwrap()
+		self.0.get(asset).expect(&format!("Failed to load asset {asset}!"))
 	}
 }
 #[derive(Debug, Default)]
@@ -45,31 +45,47 @@ impl GameState {
 		event_layers.push(Self::update_camera);
 	}
 	fn update_camera(&mut self, event: &EventType) -> bool {
-		if let EventType::PointerMove(delta) = event && self.input.mouse_down(MouseButton::Primary){
-			self.camera.mouse_move(*delta);
-			true
-		} else if let EventType::PointerScroll(delta) = event{
-			const ZOOM_WHEEL_RATE: f32 = 1. / 600.;
+		match event {
+			EventType::PointerMove(delta) if self.input.mouse_down(MouseButton::Primary) => {
+				self.camera.velocity -= delta.as_vec2();
+				true
+			}
+			EventType::Update => {
+				info!("Update");
 
-			let scroll = delta.y.signum() as f32 * ((delta.y * delta.y + f32::min(delta.y.abs(), delta.x.abs()).powi(2))).sqrt();
+				self.camera.move_by(self.camera.velocity);
 
-			let mut zoom_factor = 1. + scroll.abs() * ZOOM_WHEEL_RATE;
-			if delta.y > 0.{
-				zoom_factor = 1. / zoom_factor
-			};
+				if self.input.mouse_down(MouseButton::Primary) {
+					self.camera.velocity = Vec2::ZERO;
+				} else {
+					self.camera.velocity *= 0.95;
+				}
 
-			let viewport_bounds = self.viewport.as_vec2();
-			let new_viewport_bounds = viewport_bounds / zoom_factor;
-			let delta_size = viewport_bounds - new_viewport_bounds;
-			let mouse_fraction = self.input.mouse_pos.as_vec2() / viewport_bounds;
-			let delta = delta_size * (Vec2::splat(0.5) - mouse_fraction);
+				true
+			}
+			EventType::PointerScroll(delta) => {
+				const ZOOM_WHEEL_RATE: f32 = 1. / 600.;
 
-			self.camera.zoom *= zoom_factor;
-			self.camera.move_by(delta);
+				let scroll = delta.y.signum() as f32 * (delta.y * delta.y + f32::min(delta.y.abs(), delta.x.abs()).powi(2)).sqrt();
 
-			true
-		} else{
-			false
+				let mut zoom_factor = 1. + scroll.abs() * ZOOM_WHEEL_RATE;
+				if delta.y < 0. {
+					zoom_factor = 1. / zoom_factor
+				};
+
+				let viewport_bounds = self.viewport.as_vec2();
+				let new_viewport_bounds = viewport_bounds / zoom_factor;
+				let delta_size = viewport_bounds - new_viewport_bounds;
+				let mouse_fraction = self.input.mouse_pos.as_vec2() / viewport_bounds;
+				let delta = delta_size * (Vec2::splat(0.5) - mouse_fraction);
+
+				self.camera.zoom *= zoom_factor;
+				self.camera.move_by(delta);
+
+				true
+			}
+
+			_ => false,
 		}
 	}
 }
@@ -106,8 +122,9 @@ impl Application {
 	}
 
 	/// Redraws the game
-	pub fn redraw(&mut self, time: f32) {
+	pub fn update(&mut self, time: f32) {
 		self.game_state.time.update_time(time);
+		self.event(EventType::Update);
 		self.renderer.rerender(&self.game_state);
 		//Mat4::orthographic_rh_gl(left, right, bottom, top, near, far)
 

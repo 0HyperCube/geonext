@@ -35,6 +35,10 @@ impl Time {
 
 	/// The peak framerate in the last 10 frames
 	pub fn peak_frametime(&self) -> f32 {
-		self.delta_times.iter().max_by(|&x, &y| x.partial_cmp(y).unwrap()).map(|&x| x).unwrap_or_default()
+		self.delta_times
+			.iter()
+			.max_by(|&x, &y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
+			.map(|&x| x)
+			.unwrap_or_default()
 	}
 }

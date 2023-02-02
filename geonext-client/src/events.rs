@@ -45,6 +45,7 @@ pub enum EventType {
 	KeyDown(String),
 	KeyUp(String),
 	Resize(UVec2),
+	Update,
 }
 
 #[derive(Debug, Default)]
