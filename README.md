@@ -7,11 +7,11 @@ Install the requied software:
 
 - wasm-pack https://rustwasm.github.io/ - provides js generation
 - rust https://www.rust-lang.org/ - compiles the code
-- This code (obviously)
+- This code
 
 Run the application
 - Open your terminal / command line inside the geonext folder
-- Run `cargo run -- wasm-frontend/`
+- Run `cargo run`
 
 
 ## Todo
@@ -20,11 +20,10 @@ Run the application
 - [x] Triangulation
 - [ ] Colour world
 - [ ] Directional light
-
-## Polish
-
-- [ ] Smoothing on camera
 - [ ] Better world distribution
+- [ ] Capturing territory
+- [ ] Resources
+- [ ] Unit movements
 
 ## Credits
 - World heightmap: [NASA](https://neo.gsfc.nasa.gov/view.php?datasetId=SRTM_RAMP2_TOPO)
