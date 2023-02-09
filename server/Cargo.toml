@@ -8,13 +8,19 @@ edition = "2021"
 [dependencies]
 notify = { git = "https://github.com/notify-rs/notify.git", optional = true }
 tide = { version = "0.16" }
+async-h1 = { version = "2.2.3" }
+http-types = { version = "2" }
+surf = { version = "2" }
+form_urlencoded = { version = "1" }
+serde_json = { version = "1" }
 async-std = { version = "1.12", default-features = false, features = [
 	"async-global-executor",
 	"futures-lite",
 	"attributes"
 	] }
+anyhow = "1.0"
 
 [features]
 debugging = ["dep:notify"]
-default = ["debugging"]
+#default = ["debugging"]
 

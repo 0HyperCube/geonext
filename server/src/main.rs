@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use async_std::fs::read_to_string;
+use http_types::{headers::HeaderName, Url};
 use tide::{Request, Response};
 
 #[cfg(feature = "debugging")]
@@ -17,24 +18,25 @@ struct State {
 	absolute_owned_client_path: PathBuf,
 }
 
-fn compute_path() -> PathBuf {
+/// Finds the path to the geonext folder - can be passed as a command line argument or the executable location
+fn compute_path() -> anyhow::Result<PathBuf> {
 	let geonext_path = if let Some(last_argument) = std::env::args().last() {
 		let user_inputted_path = std::path::Path::new(&last_argument);
 		if user_inputted_path.is_absolute() {
 			user_inputted_path.to_owned()
 		} else {
-			let current_dir = std::env::current_dir().unwrap();
+			let current_dir = std::env::current_dir()?;
 			current_dir.join(user_inputted_path)
 		}
 	} else {
-		std::env::current_exe().unwrap()
+		std::env::current_exe()?
 	};
 	for ancestor in geonext_path.ancestors() {
 		if ancestor.ends_with("geonext") {
-			return ancestor.to_path_buf().join("wasm-frontend");
+			return Ok(ancestor.to_path_buf().join("wasm-frontend"));
 		}
 	}
-	geonext_path.join("wasm-frontend")
+	Ok(geonext_path.join("wasm-frontend"))
 }
 
 // Because we're running a web server we need a runtime,
@@ -42,7 +44,7 @@ fn compute_path() -> PathBuf {
 #[async_std::main]
 async fn main() -> tide::Result<()> {
 	// Extract the path from the command line args
-	let absolute_owned_client_path = compute_path();
+	let absolute_owned_client_path = compute_path()?;
 
 	compile_client(std::path::Path::new(&absolute_owned_client_path));
 
@@ -63,6 +65,9 @@ async fn main() -> tide::Result<()> {
 
 	#[cfg(feature = "debugging")]
 	app.at("/__reload").get(get_reload);
+
+	app.at("/__auth").get(get_index);
+
 	let mut assets = serve_path.parent().unwrap().to_path_buf();
 	assets.push("assets");
 	app.at("/assets").serve_dir(&assets).unwrap();
@@ -96,22 +101,93 @@ fn add_hot_reload_javascript(mut body: String) -> String {
 	body
 }
 
+async fn read_file(file_name: &'static str, req: &Request<State>) -> anyhow::Result<String> {
+	let mut owned_client_path = req.state().absolute_owned_client_path.clone();
+	owned_client_path.push(file_name);
+	Ok(read_to_string(&owned_client_path).await?)
+}
+
+async fn insert_standard_head(mut body: String, req: &Request<State>) -> anyhow::Result<String> {
+	let insert_below = r#"<html lang="en">"#;
+	if let Some(pos) = body.find(insert_below) {
+		body.insert_str(pos + insert_below.len(), &read_file("standard_head.html", req).await?)
+	}
+	Ok(body)
+}
+
 /// Returns the index.html file, inserting a hot reload script if debug is enabled
 async fn get_index(req: Request<State>) -> tide::Result {
-	let mut owned_client_path = req.state().absolute_owned_client_path.clone();
-	owned_client_path.push("index.html");
-	let path = std::path::Path::new(&owned_client_path);
+	if let Some((_, code)) = req.url().query_pairs().find(|(key, _)| key == "code") {
+		let access_token = exchange_code(&code).await.unwrap();
+		let (id, username) = get_identity(&access_token).await.unwrap();
+		println!("Id {id} username {username}");
 
-	let mut res = Response::new(200);
-	res.set_content_type("text/html;charset=utf-8");
+		let index = insert_standard_head(read_file("index.html", &req).await?, &req).await?;
 
-	#[cfg(feature = "debugging")]
-	res.set_body(add_hot_reload_javascript(read_to_string(path).await.unwrap()));
+		let mut res = Response::new(200);
+		res.set_content_type("text/html;charset=utf-8");
 
-	#[cfg(not(feature = "debugging"))]
-	res.set_body(read_to_string(path).await.unwrap());
+		#[cfg(feature = "debugging")]
+		res.set_body(add_hot_reload_javascript(index));
 
-	Ok(res)
+		#[cfg(not(feature = "debugging"))]
+		res.set_body(index);
+
+		Ok(res)
+	} else {
+		let welcome = insert_standard_head(read_file("welcome.html", &req).await?, &req).await?;
+
+		let mut res = Response::new(200);
+		res.set_content_type("text/html;charset=utf-8");
+
+		res.set_body(welcome);
+
+		Ok(res)
+	}
+}
+
+const API_ENDPOINT: &str = "https://discord.com/api/v10";
+const CLIENT_ID: &str = "1072924944050159722";
+const CLIENT_SECRET: &str = "RYDgLb5kLojXwHWsxtIdqj1PIS4WeRc8";
+
+async fn exchange_code(code: &str) -> anyhow::Result<String> {
+	let body = form_urlencoded::Serializer::new(String::new())
+		.append_pair("client_id", CLIENT_ID)
+		.append_pair("client_secret", CLIENT_SECRET)
+		.append_pair("grant_type", "authorization_code")
+		.append_pair("code", code)
+		.append_pair("redirect_uri", "http://127.0.0.1:8080")
+		.finish();
+
+	let url = &format!("{API_ENDPOINT}/oauth2/token");
+	let response = surf::post(url).body(body).content_type("application/x-www-form-urlencoded").recv_string().await.unwrap();
+
+	let response_json: serde_json::Value = serde_json::from_str(&response)?;
+	let access_token = &response_json["access_token"];
+
+	access_token.as_str().map(|x| x.to_string()).ok_or(anyhow::anyhow!("No access token: {response}"))
+}
+
+async fn get_identity(access_token: &str) -> anyhow::Result<(String, String)> {
+	let url = format!("{API_ENDPOINT}/users/@me");
+	let response = surf::get(url)
+		//.body(body)
+		//.content_type("application/json")
+		.header("Authorization", format!("Bearer {access_token}"))
+		.header("User-Agent", "GeoNext (http://127.0.0.1:8080, 1)")
+		.recv_string()
+		.await
+		.unwrap();
+
+	let response_json: serde_json::Value = serde_json::from_str(&response)?;
+	println!("Response {response}");
+	let id = &response_json["id"];
+	let username = &response_json["username"];
+
+	Ok((
+		id.as_str().map(|x| x.to_string()).ok_or(anyhow::anyhow!("No id: {response}"))?,
+		username.as_str().map(|x| x.to_string()).ok_or(anyhow::anyhow!("No username: {response}"))?,
+	))
 }
 
 #[cfg(feature = "debugging")]
