@@ -51,8 +51,6 @@ impl GameState {
 				true
 			}
 			EventType::Update => {
-				info!("Update");
-
 				self.camera.move_by(self.camera.velocity);
 
 				if self.input.mouse_down(MouseButton::Primary) {
@@ -142,7 +140,7 @@ impl Application {
 
 	/// Handle an event
 	pub fn event(&mut self, event: EventType) {
-		info!("Event {event:?} input {:?}", self.game_state.input);
+		//info!("Event {event:?} input {:?}", self.game_state.input);
 		for layer in &self.input_layers {
 			if layer(&mut self.game_state, &event) {
 				break;

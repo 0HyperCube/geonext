@@ -1,3 +1,7 @@
+const params = new URLSearchParams(window.location.search);
+var code = params.get("code");
+history.replaceState(null, "", window.location.href.replace(window.location.search, ""));
+
 import { with_assets } from '/pkg/wasm_frontend.js';
 
 export function load_asset(asset){
@@ -17,7 +21,7 @@ export function load_asset(asset){
 			document.getElementById("errorreason").innerText = "Error fetching assets: " + e;
 			return;
 		}
-		with_assets(asset);
+		with_assets(asset, code);
 	};
 
 	

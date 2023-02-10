@@ -2,6 +2,8 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::FnMut;
+use std::ops::FnOnce;
 use std::rc::Rc;
 
 use geonext_client::{Application, Assets, GameState};
@@ -142,8 +144,11 @@ fn create_gl_context(window: &web_sys::Window, canvas: &web_sys::HtmlCanvasEleme
 
 #[wasm_bindgen]
 #[cfg(target_arch = "wasm32")]
-pub fn with_assets(asset_map: Map) -> Result<(), JsValue> {
+pub fn with_assets(asset_map: Map, code: Option<String>) -> Result<(), JsValue> {
 	use geonext_client::{EventType, UVec2};
+
+	info!("Got code {code:?}");
+	start_websocket(code);
 
 	loading_status("graphics");
 	let assets = extract_assets(asset_map);
@@ -188,7 +193,6 @@ pub fn with_assets(asset_map: Map) -> Result<(), JsValue> {
 		APPLICATION_CELL.with(|cell| {
 			if let Some(application) = &mut *cell.borrow_mut() {
 				application.update(time as f32);
-				info!("Redraw {}", application.game_state.time.peak_frametime().round());
 				let text = format!("Peak: {}ms", application.game_state.time.peak_frametime().round());
 				textelement.set_text_content(Some(&text));
 			} else {
@@ -244,6 +248,47 @@ pub fn with_assets(asset_map: Map) -> Result<(), JsValue> {
 
 	let key_up = |_: &mut Application, e: web_sys::KeyboardEvent| EventType::KeyUp(e.key());
 	add_document_event("keyup", key_up);
+
+	Ok(())
+}
+
+fn start_websocket(code: Option<String>) -> Result<(), JsValue> {
+	let ws = web_sys::WebSocket::new("ws://localhost:8080/__stream")?;
+	// create callback
+	let cloned_ws = ws.clone();
+	let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: web_sys::MessageEvent| {
+		if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
+			info!("message event, received Text: {:?}", txt);
+		} else {
+			warn!("message event, received Unknown: {:?}", e.data());
+		}
+	});
+	// set message event handler on WebSocket
+	ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
+	// forget the callback to keep it alive
+	onmessage_callback.forget();
+
+	// Log any errors
+	let onerror_callback = Closure::<dyn FnMut(_)>::new(move |e: web_sys::ErrorEvent| {
+		error!("error event: {:?}", e);
+	});
+	ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
+	onerror_callback.forget();
+
+	// Check on socket open
+	let cloned_ws = ws.clone();
+	let onopen_callback = Closure::<dyn FnMut()>::new(move || {
+		if let Some(code) = code.clone() {
+			info!("socket opened");
+			let data = serde_json::to_string(&geonext_shared::ClientMessage::Auth { code }).unwrap();
+			match cloned_ws.send_with_str(&data) {
+				Ok(_) => info!("message successfully sent"),
+				Err(err) => error!("error sending message: {:?}", err),
+			}
+		}
+	});
+	ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
+	onopen_callback.forget();
 
 	Ok(())
 }

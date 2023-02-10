@@ -11,6 +11,8 @@ js-sys = "0.3"
 geonext_client = { path = "../geonext-client", version = "*" }
 glow = "0.12"
 log = "*"
+geonext-shared = { path = "../geonext-shared" }
+serde_json = { version = "1" }
 
 [dependencies.web-sys]
 version = "0.3.4"
@@ -24,6 +26,9 @@ features = [
   "PointerEvent",
   "WheelEvent",
   "KeyboardEvent",
+  "WebSocket",
+  "ErrorEvent",
+  "MessageEvent"
 ]
 
 [lib]

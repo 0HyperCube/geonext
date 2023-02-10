@@ -6,21 +6,26 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-notify = { git = "https://github.com/notify-rs/notify.git", optional = true }
-tide = { version = "0.16" }
-async-h1 = { version = "2.2.3" }
-http-types = { version = "2" }
-surf = { version = "2" }
-form_urlencoded = { version = "1" }
-serde_json = { version = "1" }
+notify = { git = "https://github.com/notify-rs/notify.git", optional = true, default-features = false }
+tide = { version = "0.16", default-features = false }
+async-h1 = { version = "2.2.3", default-features = false }
+http-types = { version = "2", default-features = false }
+surf = { version = "2", default-features = false, features = ["h1-client"] }
+form_urlencoded = { version = "1", default-features = false}
+serde_json = { version = "1", default-features = false }
 async-std = { version = "1.12", default-features = false, features = [
 	"async-global-executor",
 	"futures-lite",
 	"attributes"
 	] }
-anyhow = "1.0"
+anyhow = { version = "1.0", default-features = false }
+tide-websockets = { version = "0.4", default-features = false }
+log = "0.4"
+simplelog = "*"
+serde = { version = "1", default-features = false }
+geonext-shared = { path = "../geonext-shared" }
 
 [features]
 debugging = ["dep:notify"]
-#default = ["debugging"]
+default = ["debugging"]
 

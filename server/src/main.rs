@@ -1,16 +1,34 @@
 use std::path::PathBuf;
 
+use anyhow::{anyhow, Context};
 use async_std::fs::read_to_string;
-use http_types::{headers::HeaderName, Url};
 use tide::{Request, Response};
+
+#[macro_use]
+extern crate log;
 
 #[cfg(feature = "debugging")]
 use async_std::channel::*;
 #[cfg(feature = "debugging")]
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use tide_websockets::WebSocketConnection;
+
+// Use simplelog with a file and the console.
+fn init_logger() {
+	use simplelog::*;
+	use std::fs::File;
+
+	CombinedLogger::init(vec![
+		TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
+		WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("CheeseBot.log").unwrap()),
+	])
+	.unwrap();
+
+	info!("Initalised logger!");
+}
 
 #[derive(Clone)]
-struct State {
+pub struct State {
 	#[cfg(feature = "debugging")]
 	/// Sends an empty value whenever the client is rebuilt (in debugging mode)
 	hot_reload_reciever: Receiver<()>,
@@ -43,8 +61,12 @@ fn compute_path() -> anyhow::Result<PathBuf> {
 // for more information on async runtimes, please check out [async-std](https://github.com/async-rs/async-std)
 #[async_std::main]
 async fn main() -> tide::Result<()> {
+	init_logger();
+
 	// Extract the path from the command line args
-	let absolute_owned_client_path = compute_path()?;
+	let absolute_owned_client_path = compute_path().context("Find root file path")?;
+
+	info!("Root file path: {}", absolute_owned_client_path.to_string_lossy());
 
 	compile_client(std::path::Path::new(&absolute_owned_client_path));
 
@@ -68,6 +90,19 @@ async fn main() -> tide::Result<()> {
 
 	app.at("/__auth").get(get_index);
 
+	app.at("/__stream").get(tide_websockets::WebSocket::new(|request, mut stream| async move {
+		use async_std::stream::StreamExt;
+		while let Some(Ok(tide_websockets::Message::Text(input))) = stream.next().await {
+			let stream = Stream { stream: &mut stream };
+			if let Err(e) = websocket(&request, &input, &stream).await.context("Handling websocket message") {
+				error!("Message: {input}\nError: {e:?}");
+				stream.send(&geonext_shared::ServerMessage::Error { message: format!("{e:?}") }).await?;
+			}
+		}
+
+		Ok(())
+	}));
+
 	let mut assets = serve_path.parent().unwrap().to_path_buf();
 	assets.push("assets");
 	app.at("/assets").serve_dir(&assets).unwrap();
@@ -75,6 +110,37 @@ async fn main() -> tide::Result<()> {
 	app.at("/").serve_dir(serve_path).unwrap();
 	app.listen("127.0.0.1:8080").await?;
 
+	Ok(())
+}
+
+async fn websocket(request: &Request<State>, input: &str, stream: &Stream<'_>) -> anyhow::Result<()> {
+	let serde_json: geonext_shared::ClientMessage = serde_json::from_str(input).with_context(|| format!("Decode websocket json \"{input}\""))?;
+	let context = SocketContext { request, input, stream };
+	match serde_json {
+		geonext_shared::ClientMessage::Auth { code } => identify(context, code).await.context("Authentication message"),
+	}
+}
+
+struct Stream<'a> {
+	stream: &'a mut WebSocketConnection,
+}
+impl<'a> Stream<'a> {
+	async fn send(&self, message: &geonext_shared::ServerMessage) -> anyhow::Result<()> {
+		let response = serde_json::to_string(message).expect("Serialising should sucseed");
+		self.stream.send_string(response).await.map_err(|e| anyhow!("Failed to send json {e:?}"))
+	}
+}
+
+struct SocketContext<'a> {
+	request: &'a Request<State>,
+	input: &'a str,
+	stream: &'a Stream<'a>,
+}
+
+async fn identify(context: SocketContext<'_>, code: String) -> anyhow::Result<()> {
+	let access_token = exchange_code(&code, context.request).await.context("Exchange discord oauth code")?;
+	let (id, username) = get_identity(&access_token).await.context("Get discord identity")?;
+	context.stream.send(&geonext_shared::ServerMessage::AuthAccepted { username }).await?;
 	Ok(())
 }
 
@@ -104,24 +170,20 @@ fn add_hot_reload_javascript(mut body: String) -> String {
 async fn read_file(file_name: &'static str, req: &Request<State>) -> anyhow::Result<String> {
 	let mut owned_client_path = req.state().absolute_owned_client_path.clone();
 	owned_client_path.push(file_name);
-	Ok(read_to_string(&owned_client_path).await?)
+	Ok(read_to_string(&owned_client_path).await.context("reading file")?)
 }
 
 async fn insert_standard_head(mut body: String, req: &Request<State>) -> anyhow::Result<String> {
 	let insert_below = r#"<html lang="en">"#;
 	if let Some(pos) = body.find(insert_below) {
-		body.insert_str(pos + insert_below.len(), &read_file("standard_head.html", req).await?)
+		body.insert_str(pos + insert_below.len(), &read_file("standard_head.html", req).await.context("Insert standard head")?)
 	}
 	Ok(body)
 }
 
 /// Returns the index.html file, inserting a hot reload script if debug is enabled
 async fn get_index(req: Request<State>) -> tide::Result {
-	if let Some((_, code)) = req.url().query_pairs().find(|(key, _)| key == "code") {
-		let access_token = exchange_code(&code).await.unwrap();
-		let (id, username) = get_identity(&access_token).await.unwrap();
-		println!("Id {id} username {username}");
-
+	if req.url().query_pairs().any(|(key, _)| key == "code") {
 		let index = insert_standard_head(read_file("index.html", &req).await?, &req).await?;
 
 		let mut res = Response::new(200);
@@ -148,24 +210,30 @@ async fn get_index(req: Request<State>) -> tide::Result {
 
 const API_ENDPOINT: &str = "https://discord.com/api/v10";
 const CLIENT_ID: &str = "1072924944050159722";
-const CLIENT_SECRET: &str = "RYDgLb5kLojXwHWsxtIdqj1PIS4WeRc8";
 
-async fn exchange_code(code: &str) -> anyhow::Result<String> {
+async fn exchange_code(code: &str, req: &Request<State>) -> anyhow::Result<String> {
+	let client_secret = read_file("client_secret.txt", req).await.context("Getting client secret file")?;
+
 	let body = form_urlencoded::Serializer::new(String::new())
 		.append_pair("client_id", CLIENT_ID)
-		.append_pair("client_secret", CLIENT_SECRET)
+		.append_pair("client_secret", client_secret.trim())
 		.append_pair("grant_type", "authorization_code")
 		.append_pair("code", code)
 		.append_pair("redirect_uri", "http://127.0.0.1:8080")
 		.finish();
 
 	let url = &format!("{API_ENDPOINT}/oauth2/token");
-	let response = surf::post(url).body(body).content_type("application/x-www-form-urlencoded").recv_string().await.unwrap();
+	let response = surf::post(url)
+		.body(body)
+		.content_type("application/x-www-form-urlencoded")
+		.recv_string()
+		.await
+		.map_err(|e| anyhow!("Requesting exchange code {e:?}"))?;
 
-	let response_json: serde_json::Value = serde_json::from_str(&response)?;
+	let response_json: serde_json::Value = serde_json::from_str(&response).context("Deserialising exchange code")?;
 	let access_token = &response_json["access_token"];
 
-	access_token.as_str().map(|x| x.to_string()).ok_or(anyhow::anyhow!("No access token: {response}"))
+	access_token.as_str().map(|x| x.to_string()).ok_or(anyhow!("No access token: {response}"))
 }
 
 async fn get_identity(access_token: &str) -> anyhow::Result<(String, String)> {
@@ -177,16 +245,16 @@ async fn get_identity(access_token: &str) -> anyhow::Result<(String, String)> {
 		.header("User-Agent", "GeoNext (http://127.0.0.1:8080, 1)")
 		.recv_string()
 		.await
-		.unwrap();
+		.map_err(|e| anyhow!("get_identity {e:?}"))?;
 
-	let response_json: serde_json::Value = serde_json::from_str(&response)?;
-	println!("Response {response}");
+	let response_json: serde_json::Value = serde_json::from_str(&response).context("Deserialising identity")?;
+	info!("Response {response}");
 	let id = &response_json["id"];
 	let username = &response_json["username"];
 
 	Ok((
-		id.as_str().map(|x| x.to_string()).ok_or(anyhow::anyhow!("No id: {response}"))?,
-		username.as_str().map(|x| x.to_string()).ok_or(anyhow::anyhow!("No username: {response}"))?,
+		id.as_str().map(|x| x.to_string()).ok_or(anyhow!("No id: {response}"))?,
+		username.as_str().map(|x| x.to_string()).ok_or(anyhow!("No username: {response}"))?,
 	))
 }
 
@@ -198,13 +266,13 @@ fn process_file_watcher_event(result: Result<Event, notify::Error>, absolute_own
 	let is_reload = event.kind.is_modify()
 		&& event.paths.iter().any(|path| {
 			let string = path.to_string_lossy();
-			!string.contains("target/") && !string.contains(".lock") && !string.contains("/pkg/") && !string.contains(".git")
+			!string.contains("target/") && !string.contains(".lock") && !string.contains("/pkg/") && !string.contains(".git") && !string.contains(".log")
 		});
 	if is_reload {
 		// Clear screen
 		print!("\x1B[2J\x1B[1;1H");
 
-		println!("Live refresh of: {}", event.paths.iter().filter_map(|path| path.to_str()).collect::<Vec<_>>().join(", "));
+		info!("Live refresh of: {}", event.paths.iter().filter_map(|path| path.to_str()).collect::<Vec<_>>().join(", "));
 
 		if compile_client(std::path::Path::new(&absolute_owned_client_path)) {
 			let _ = hot_reload_sender.send_blocking(());
@@ -225,7 +293,7 @@ fn initalise_filewatcher(absolute_owned_client_path: PathBuf) -> notify::Result<
 	let mut watcher = RecommendedWatcher::new(event_handler, notify::Config::default())?;
 
 	watcher.watch(watch, RecursiveMode::Recursive)?;
-	println!("Watching directory {:?}", watch);
+	info!("Watching directory {:?}", watch);
 	Ok((watcher, hot_reload_reciever))
 }
 
@@ -278,7 +346,7 @@ fn compile_client(path: &std::path::Path) -> bool {
 		return false;
 	}
 
-	println!("\nServing on http://127.0.0.1:8080");
+	warn!("\nServing on http://127.0.0.1:8080");
 
 	true
 }
