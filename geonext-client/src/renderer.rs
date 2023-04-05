@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use glam::{Mat4, Vec4};
-use glow::{Framebuffer, HasContext};
+use glow::HasContext;
 
 use crate::{ErrorKind, GameState};
 
@@ -12,7 +12,7 @@ pub mod text;
 
 pub struct Programs {
 	scene_program: Program,
-	ui_program: Program,
+	_ui_program: Program,
 	text_program: Program,
 }
 
@@ -20,11 +20,12 @@ pub struct Programs {
 pub struct OpenGl {
 	vert_arr: Option<<glow::Context as glow::HasContext>::VertexArray>,
 	vert_buff: Option<<glow::Context as glow::HasContext>::Buffer>,
+	text_vertex_array: Option<<glow::Context as glow::HasContext>::VertexArray>,
+	text_vertex_buffer: Option<<glow::Context as glow::HasContext>::Buffer>,
 	indicies_count: usize,
 	programs: Option<Programs>,
 	//framebuffers: FnvHashMap<ImageId, Result<Framebuffer, ErrorKind>>,
 	context: Rc<glow::Context>,
-	screen_target: Option<Framebuffer>,
 	pub font: text::FontCache,
 }
 
@@ -35,10 +36,12 @@ impl OpenGl {
 		Self {
 			vert_arr: None,
 			vert_buff: None,
+			text_vertex_array: None,
+			text_vertex_buffer: None,
 			indicies_count: 0,
 			programs: None,
 			context: context.clone(),
-			screen_target: None,
+
 			font: text::FontCache::new(context),
 		}
 	}
@@ -118,18 +121,33 @@ impl OpenGl {
 			self.context.bind_buffer(glow::ARRAY_BUFFER, None);
 			self.context.bind_vertex_array(None);
 
+			let text_vertex_array = self.context.create_vertex_array().map_err(ErrorKind::VertexArray)?;
+			let text_vertex_buffer = self.context.create_buffer().map_err(ErrorKind::VertexArray)?;
+
+			self.context.bind_vertex_array(Some(text_vertex_array));
+			self.context.bind_buffer(glow::ARRAY_BUFFER, Some(text_vertex_buffer));
+			self.context.buffer_data_size(glow::ARRAY_BUFFER, std::mem::size_of::<f32>() as i32 * 6 * 4, glow::DYNAMIC_DRAW);
+			self.context.enable_vertex_attrib_array(0);
+			self.context.vertex_attrib_pointer_f32(0, 4, glow::FLOAT, false, core::mem::size_of::<f32>() as i32 * 4, 0);
+
+			// Unbind buffers
+			self.context.bind_buffer(glow::ARRAY_BUFFER, None);
+			self.context.bind_vertex_array(None);
+
 			// Create texture
 			// s t and r axis = x y z
-			self.context.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::MIRRORED_REPEAT as i32);
-			self.context.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::MIRRORED_REPEAT as i32);
-			self.context.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+			// self.context.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::MIRRORED_REPEAT as i32);
+			// self.context.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::MIRRORED_REPEAT as i32);
+			// self.context.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
 
 			// Store state
 			self.vert_arr = Some(vertex_array);
 			self.vert_buff = Some(vertex_buffer);
+			self.text_vertex_array = Some(text_vertex_array);
+			self.text_vertex_buffer = Some(text_vertex_buffer);
 			self.programs = Some(Programs {
 				scene_program,
-				ui_program,
+				_ui_program: ui_program,
 				text_program,
 			});
 		}
@@ -139,10 +157,10 @@ impl OpenGl {
 
 	/// Renders a frame
 	pub fn rerender(&mut self, game_state: &GameState) {
-		if let (Some(vertex_array), Some(programs)) = (self.vert_arr, &self.programs) {
+		if let (Some(vertex_array), Some(text_vertex_array), Some(text_vertex_buffer), Some(programs)) = (self.vert_arr, self.text_vertex_array, self.text_vertex_buffer, &self.programs) {
 			let Programs {
 				scene_program,
-				ui_program,
+				_ui_program: _,
 				text_program,
 			} = programs;
 			unsafe {
@@ -162,6 +180,23 @@ impl OpenGl {
 
 				self.context.bind_vertex_array(Some(vertex_array));
 				self.context.draw_elements(glow::TRIANGLES, self.indicies_count as i32, glow::UNSIGNED_INT, 0);
+
+				let projection = Mat4::orthographic_rh_gl(0., game_state.viewport.x as f32, 0., game_state.viewport.y as f32, 0., 1000.);
+				text_program.bind();
+				text_program.set_vec3("textColour", glam::Vec3::ONE);
+				text_program.set_mat4("projection", projection);
+				self.context.active_texture(glow::TEXTURE0);
+				self.context.bind_vertex_array(Some(text_vertex_array));
+				self.font
+					.render_glyphs("the quick brown fox jumped over the lazy dog", "regular", glam::Vec2::splat(50.), text_vertex_buffer);
+				self.font.render_glyphs(
+					&format!("peek: {}ms", game_state.time.peak_frametime().round()),
+					"regular",
+					glam::Vec2::new(50., game_state.viewport.y as f32 - 50.),
+					text_vertex_buffer,
+				);
+				self.context.bind_vertex_array(None);
+				self.context.bind_texture(glow::TEXTURE_2D, None);
 			}
 		}
 	}

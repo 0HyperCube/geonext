@@ -328,9 +328,7 @@ fn compile_client(path: &std::path::Path) -> bool {
 	let output = match cmd
 		.args(&["build", "--target", "web", "--no-typescript", optimisations, "--", "--color", "always"])
 		.current_dir(path)
-		.stderr(Stdio::piped())
-		.stdout(Stdio::piped())
-		.output()
+		.status()
 	{
 		Ok(x) => x,
 		Err(e) => {
@@ -340,13 +338,13 @@ fn compile_client(path: &std::path::Path) -> bool {
 	};
 
 	// Show the user the output from wasm-pack
-	io::stdout().write_all(&output.stdout).unwrap();
-	io::stderr().write_all(&output.stderr).unwrap();
+	// io::stdout().write_all(&output.stdout).unwrap();
+	// io::stderr().write_all(&output.stderr).unwrap();
 
 	// let out = output.wait().expect("Could not wait");
 	// while out.code() == Some(2) {}
-	if !output.status.success() {
-		error!("Wasm-pack returned with status code {}", output.status);
+	if !output.success() {
+		error!("Wasm-pack returned with status code {}", output);
 		return false;
 	}
 

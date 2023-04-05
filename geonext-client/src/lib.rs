@@ -107,7 +107,7 @@ impl Application {
 		game_state.terrain.load(&assets.get("heightmap"));
 		let (vertices, indices) = game_state.terrain.generate_terrain();
 		renderer.init(&vertices, &indices)?;
-		renderer.font.load_glyphs("nicht maßstäblich", &assets, "regular");
+		renderer.font.add_font(&assets, "regular");
 
 		let mut input_layers = Default::default();
 		game_state.init(&mut input_layers);

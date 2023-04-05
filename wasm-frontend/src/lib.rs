@@ -3,7 +3,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::FnMut;
-use std::ops::FnOnce;
 use std::rc::Rc;
 
 use geonext_client::{Application, Assets, GameState};
@@ -148,7 +147,7 @@ pub fn with_assets(asset_map: Map, code: Option<String>) -> Result<(), JsValue> 
 	use geonext_client::{EventType, UVec2};
 
 	info!("Got code {code:?}");
-	start_websocket(code);
+	start_websocket(code).unwrap();
 
 	loading_status("graphics");
 	let assets = extract_assets(asset_map);
@@ -255,7 +254,7 @@ pub fn with_assets(asset_map: Map, code: Option<String>) -> Result<(), JsValue> 
 fn start_websocket(code: Option<String>) -> Result<(), JsValue> {
 	let ws = web_sys::WebSocket::new("ws://localhost:8080/__stream")?;
 	// create callback
-	let cloned_ws = ws.clone();
+	let _cloned_ws = ws.clone();
 	let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: web_sys::MessageEvent| {
 		if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
 			info!("message event, received Text: {:?}", txt);
