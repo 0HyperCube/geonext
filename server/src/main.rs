@@ -183,7 +183,7 @@ async fn insert_standard_head(mut body: String, req: &Request<State>) -> anyhow:
 
 /// Returns the index.html file, inserting a hot reload script if debug is enabled
 async fn get_index(req: Request<State>) -> tide::Result {
-	if req.url().query_pairs().any(|(key, _)| key == "code") {
+	if !req.url().query_pairs().any(|(key, _)| key == "code") {
 		let index = insert_standard_head(read_file("index.html", &req).await?, &req).await?;
 
 		let mut res = Response::new(200);
@@ -333,7 +333,10 @@ fn compile_client(path: &std::path::Path) -> bool {
 		.output()
 	{
 		Ok(x) => x,
-		_ => return false,
+		Err(e) => {
+			error!("Failed to run wasm-pack: {e:?}");
+			return false;
+		}
 	};
 
 	// Show the user the output from wasm-pack
@@ -343,6 +346,7 @@ fn compile_client(path: &std::path::Path) -> bool {
 	// let out = output.wait().expect("Could not wait");
 	// while out.code() == Some(2) {}
 	if !output.status.success() {
+		error!("Wasm-pack returned with status code {}", output.status);
 		return false;
 	}
 
