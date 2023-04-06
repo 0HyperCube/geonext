@@ -22,6 +22,7 @@ pub struct OpenGl {
 	vert_buff: Option<<glow::Context as glow::HasContext>::Buffer>,
 	text_vertex_array: Option<<glow::Context as glow::HasContext>::VertexArray>,
 	text_vertex_buffer: Option<<glow::Context as glow::HasContext>::Buffer>,
+	text_instance_buffer: Option<<glow::Context as glow::HasContext>::Buffer>,
 	indicies_count: usize,
 	programs: Option<Programs>,
 	//framebuffers: FnvHashMap<ImageId, Result<Framebuffer, ErrorKind>>,
@@ -38,6 +39,7 @@ impl OpenGl {
 			vert_buff: None,
 			text_vertex_array: None,
 			text_vertex_buffer: None,
+			text_instance_buffer: None,
 			indicies_count: 0,
 			programs: None,
 			context: context.clone(),
@@ -121,17 +123,37 @@ impl OpenGl {
 			self.context.bind_buffer(glow::ARRAY_BUFFER, None);
 			self.context.bind_vertex_array(None);
 
+			// Bind text vertex array
 			let text_vertex_array = self.context.create_vertex_array().map_err(ErrorKind::VertexArray)?;
-			let text_vertex_buffer = self.context.create_buffer().map_err(ErrorKind::VertexArray)?;
-
 			self.context.bind_vertex_array(Some(text_vertex_array));
-			self.context.bind_buffer(glow::ARRAY_BUFFER, Some(text_vertex_buffer));
-			self.context.buffer_data_size(glow::ARRAY_BUFFER, std::mem::size_of::<f32>() as i32 * 6 * 4, glow::DYNAMIC_DRAW);
-			self.context.enable_vertex_attrib_array(0);
-			self.context.vertex_attrib_pointer_f32(0, 4, glow::FLOAT, false, core::mem::size_of::<f32>() as i32 * 4, 0);
 
-			// Unbind buffers
+			// Bind text vertex buffer
+			let text_vertex_buffer = self.context.create_buffer().map_err(ErrorKind::VertexArray)?;
+			self.context.bind_buffer(glow::ARRAY_BUFFER, Some(text_vertex_buffer));
+			let square_verts = [(0., 1.), (0_f32, 0_f32), (1., 0.), (0., 1.), (1., 0.), (1., 1.)];
+			let (_, src_data, _) = square_verts.align_to();
+			self.context.buffer_data_size(glow::ARRAY_BUFFER, std::mem::size_of::<f32>() as i32 * 6 * 2, glow::STATIC_DRAW);
+			self.context.enable_vertex_attrib_array(0);
+			self.context.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, core::mem::size_of::<f32>() as i32 * 2, 0);
+			self.context.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, src_data);
 			self.context.bind_buffer(glow::ARRAY_BUFFER, None);
+
+			// Text instance buffer
+			let text_instance_buffer = self.context.create_buffer().map_err(ErrorKind::VertexArray)?;
+			self.context.bind_buffer(glow::ARRAY_BUFFER, Some(text_instance_buffer));
+			//self.context.buffer_data_size(glow::ARRAY_BUFFER, 4 * 8, glow::DYNAMIC_DRAW);
+
+			self.context.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, core::mem::size_of::<f32>() as i32 * 8, 0);
+			self.context.enable_vertex_attrib_array(1);
+			self.context.vertex_attrib_divisor(1, 1);
+
+			self.context
+				.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, core::mem::size_of::<f32>() as i32 * 8, core::mem::size_of::<f32>() as i32 * 4);
+			self.context.enable_vertex_attrib_array(2);
+			self.context.vertex_attrib_divisor(2, 1);
+			self.context.bind_buffer(glow::ARRAY_BUFFER, None);
+
+			// Unbind vertex array
 			self.context.bind_vertex_array(None);
 
 			// Create texture
@@ -145,6 +167,7 @@ impl OpenGl {
 			self.vert_buff = Some(vertex_buffer);
 			self.text_vertex_array = Some(text_vertex_array);
 			self.text_vertex_buffer = Some(text_vertex_buffer);
+			self.text_instance_buffer = Some(text_instance_buffer);
 			self.programs = Some(Programs {
 				scene_program,
 				_ui_program: ui_program,
@@ -157,7 +180,9 @@ impl OpenGl {
 
 	/// Renders a frame
 	pub fn rerender(&mut self, game_state: &GameState) {
-		if let (Some(vertex_array), Some(text_vertex_array), Some(text_vertex_buffer), Some(programs)) = (self.vert_arr, self.text_vertex_array, self.text_vertex_buffer, &self.programs) {
+		if let (Some(vertex_array), Some(text_vertex_array), Some(text_vertex_buffer), Some(text_instance_buffer), Some(programs)) =
+			(self.vert_arr, self.text_vertex_array, self.text_vertex_buffer, self.text_instance_buffer, &self.programs)
+		{
 			let Programs {
 				scene_program,
 				_ui_program: _,
@@ -181,20 +206,17 @@ impl OpenGl {
 				self.context.bind_vertex_array(Some(vertex_array));
 				self.context.draw_elements(glow::TRIANGLES, self.indicies_count as i32, glow::UNSIGNED_INT, 0);
 
-				let projection = Mat4::orthographic_rh_gl(0., game_state.viewport.x as f32, 0., game_state.viewport.y as f32, 0., 1000.);
+				let projection = Mat4::orthographic_rh_gl(0., game_state.viewport.x as f32, game_state.viewport.y as f32, 0., 0., 1000.);
 				text_program.bind();
 				text_program.set_vec3("textColour", glam::Vec3::ONE);
 				text_program.set_mat4("projection", projection);
 				self.context.active_texture(glow::TEXTURE0);
 				self.context.bind_vertex_array(Some(text_vertex_array));
+				let pos = glam::Vec2::new(20., game_state.viewport.y as f32 - 20.);
+				self.font.render_glyphs("The quick brown fox jumped over the lazy dog", "regular", pos, 0.5, text_instance_buffer);
+				let pos = glam::Vec2::new(game_state.viewport.x as f32 - 200., 20.);
 				self.font
-					.render_glyphs("the quick brown fox jumped over the lazy dog", "regular", glam::Vec2::splat(50.), text_vertex_buffer);
-				self.font.render_glyphs(
-					&format!("peek: {}ms", game_state.time.peak_frametime().round()),
-					"regular",
-					glam::Vec2::new(50., game_state.viewport.y as f32 - 50.),
-					text_vertex_buffer,
-				);
+					.render_glyphs(&format!("Peek: {}ms", game_state.time.peak_frametime().round()), "regular", pos, 0.25, text_instance_buffer);
 				self.context.bind_vertex_array(None);
 				self.context.bind_texture(glow::TEXTURE_2D, None);
 			}

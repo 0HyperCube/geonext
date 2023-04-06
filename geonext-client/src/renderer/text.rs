@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use fontdue::{Font, Metrics};
-use glam::{ UVec2, Vec2};
+use glam::{UVec2, Vec2};
 use glow::HasContext;
 
 use crate::{Assets, ErrorKind};
@@ -24,7 +24,7 @@ pub struct FontCache {
 	context: Rc<glow::Context>,
 	texture: Option<<glow::Context as HasContext>::Texture>,
 	parsed_fonts: ParsedFonts,
-	glyphs: HashMap<u16, GlyphCache>,
+	glyphs: HashMap<char, GlyphCache>,
 	atlas: Atlas,
 }
 const TEXTURE_SIZE: i32 = 512;
@@ -71,12 +71,12 @@ impl FontCache {
 		Ok(())
 	}
 
-	fn load_glyph<'a>(glyphs: &'a mut HashMap<u16, GlyphCache>, atlas: &mut Atlas, context: &Rc<glow::Context>, index: u16, font: &Font) -> &'a GlyphCache {
-		glyphs.entry(index).or_insert_with(|| {
+	fn load_glyph<'a>(glyphs: &'a mut HashMap<char, GlyphCache>, atlas: &mut Atlas, context: &Rc<glow::Context>, c: char, font: &Font) -> &'a GlyphCache {
+		glyphs.entry(c).or_insert_with(|| {
 			// Rasterize and get the layout metrics for the letter 'g' at 17px.
-			let (metrics, bitmap) = font.rasterize_indexed(index, 50.);
+			let (metrics, bitmap) = font.rasterize(c, 58.);
 			let pos = atlas
-				.allocate_rect(UVec2::new(metrics.width as u32, metrics.height as u32))
+				.allocate_rect(UVec2::new(metrics.width as u32 + 1, metrics.height as u32 + 1))
 				.expect("Too many glyphs (todo: new texture or something)");
 			unsafe {
 				context.tex_sub_image_2d(
@@ -95,49 +95,42 @@ impl FontCache {
 			GlyphCache { pos, metrics }
 		})
 	}
-	pub fn render_glyphs(&mut self, text: &str, font_name: &'static str, mut pos: Vec2, vbo: <glow::Context as glow::HasContext>::Buffer) {
+	pub fn render_glyphs(&mut self, text: &str, font_name: &'static str, mut pos: Vec2, scale: f32, instances: <glow::Context as glow::HasContext>::Buffer) {
+		unsafe { self.context.bind_texture(glow::TEXTURE_2D, Some(self.texture.unwrap())) };
+
 		let font = self.parsed_fonts.0.get(font_name).expect("Tried to use unloaded font");
 
-		unsafe {
-			self.context.bind_texture(glow::TEXTURE_2D, Some(self.texture.unwrap()));
-			info!("Bound texture");
-		}
-
+		let mut instanced_data = Vec::with_capacity(text.len());
 		for c in text.chars() {
-			let index = font.lookup_glyph_index(c);
-			let glyph = Self::load_glyph(&mut self.glyphs, &mut self.atlas, &self.context, index, font);
-			let render_pos = Vec2::new(pos.x + glyph.metrics.xmin as f32, pos.y + glyph.metrics.ymin as f32);
+			let glyph = Self::load_glyph(&mut self.glyphs, &mut self.atlas, &self.context, c, font);
+			let render_pos = Vec2::new(pos.x + glyph.metrics.xmin as f32 * scale, pos.y - (glyph.metrics.height as f32 + glyph.metrics.ymin as f32) * scale);
 			let size = Vec2::new(glyph.metrics.width as f32, glyph.metrics.height as f32);
 
 			let texture_size = Vec2::splat(TEXTURE_SIZE as f32);
 			let uv_min = glyph.pos.as_vec2() / texture_size;
 			let uv_max = (glyph.pos.as_vec2() + size) / texture_size;
 
-			info!("render {render_pos}, size {size}");
-			let verticies = [
-				((render_pos.x, render_pos.y + size.y), (uv_min.x, uv_min.y)),
-				((render_pos.x, render_pos.y), (uv_min.x, uv_max.y)),
-				((render_pos.x + size.x, render_pos.y), (uv_max.x, uv_max.y)),
-				((render_pos.x, render_pos.y + size.y), (uv_min.x, uv_min.y)),
-				((render_pos.x + size.x, render_pos.y), (uv_max.x, uv_max.y)),
-				((render_pos.x + size.x, render_pos.y + size.y), (uv_max.x, uv_min.y)),
-			];
-			unsafe {
-				let (_, src_data, _) = verticies.align_to();
-				info!("{verticies:?} src {src_data:?}");
-				self.context.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-				self.context.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, src_data);
-				self.context.bind_buffer(glow::ARRAY_BUFFER, None);
-				// render quad
-				self.context.draw_arrays(glow::TRIANGLES, 0, 6);
-			}
-			// now advance cursors for next glyph (note that advance is number of 1/64 pixels)
-			pos += Vec2::new(glyph.metrics.advance_width, glyph.metrics.advance_height);
+			let size = size * scale;
+
+			let verticies = [(render_pos, size), (uv_min, uv_max - uv_min)];
+			instanced_data.push(verticies);
+			// now advance cursors for next glyph
+			pos += Vec2::new(glyph.metrics.advance_width, glyph.metrics.advance_height) * scale;
 		}
+
 		unsafe {
-			self.context.bind_texture(glow::TEXTURE_2D, None);
-			info!("unbound texture");
+			let (_, src_data, _) = instanced_data.align_to();
+			let instance_count = instanced_data.len() as i32;
+			//info!("len {} expected: {}", x.len(), 4 * 8);
+			self.context.bind_buffer(glow::ARRAY_BUFFER, Some(instances));
+			self.context
+				.buffer_data_size(glow::ARRAY_BUFFER, std::mem::size_of::<f32>() as i32 * 8 * instance_count, glow::DYNAMIC_DRAW);
+			self.context.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, src_data);
+			self.context.bind_buffer(glow::ARRAY_BUFFER, None);
+			// render quad
+			self.context.draw_arrays_instanced(glow::TRIANGLES, 0, 6, instance_count);
 		}
+		unsafe { self.context.bind_texture(glow::TEXTURE_2D, None) };
 	}
 }
 

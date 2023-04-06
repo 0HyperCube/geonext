@@ -27,10 +27,10 @@ impl Atlas {
 				(spare_width, spare_height) => {
 					if spare_width > spare_height {
 						self.free_spaces.push([UVec2::new(pos.x + size.x, pos.y), UVec2::new(spare_width, container_size.y)]);
-						self.free_spaces.push([UVec2::new(pos.x, pos.y + size.y), UVec2::new(container_size.x, spare_height)]);
+						self.free_spaces.push([UVec2::new(pos.x, pos.y + size.y), UVec2::new(size.x, spare_height)]);
 					} else {
 						self.free_spaces.push([UVec2::new(pos.x, pos.y + size.y), UVec2::new(container_size.x, spare_height)]);
-						self.free_spaces.push([UVec2::new(pos.x + size.x, pos.y), UVec2::new(spare_width, container_size.y)]);
+						self.free_spaces.push([UVec2::new(pos.x + size.x, pos.y), UVec2::new(spare_width, size.y)]);
 					}
 				}
 			}

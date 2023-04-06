@@ -58,9 +58,11 @@ where
 {
 	let closure = Closure::wrap(Box::new(move |e: T| {
 		APPLICATION_CELL.with(|x| {
-			if let Some(application) = &mut *x.borrow_mut() {
-				let event = callback(application, e);
-				application.event(event);
+			if let Ok(mut application) = x.try_borrow_mut() {
+				if let Some(application) = &mut *application {
+					let event = callback(application, e);
+					application.event(event);
+				}
 			}
 		});
 	}) as Box<dyn FnMut(T)>);
@@ -171,7 +173,11 @@ pub fn with_assets(asset_map: Map, code: Option<String>) -> Result<(), JsValue> 
 			panic!("{}", &e);
 		}
 	};
-	APPLICATION_CELL.with(|cell| cell.borrow_mut().replace(app));
+	APPLICATION_CELL.with(|cell| {
+		if let Ok(mut old_app) = cell.try_borrow_mut() {
+			old_app.replace(app);
+		}
+	});
 
 	let moved_closure = Rc::new(RefCell::new(None));
 	let outside_closure = moved_closure.clone();
@@ -181,21 +187,21 @@ pub fn with_assets(asset_map: Map, code: Option<String>) -> Result<(), JsValue> 
 		el.set_class_name("out");
 	}
 
-	let textelement = document.get_element_by_id("t").unwrap();
 	*outside_closure.borrow_mut() = Some(Closure::wrap(Box::new(move |time: f64| {
-		// Drop our handle to this closure so that it will get cleaned
-		// up once we return.
-		// let _ = moved_closure.borrow_mut().take();
-		// return;
-
 		// Update the application
 		APPLICATION_CELL.with(|cell| {
-			if let Some(application) = &mut *cell.borrow_mut() {
-				application.update(time as f32);
-				let text = format!("Peak: {}ms", application.game_state.time.peak_frametime().round());
-				textelement.set_text_content(Some(&text));
+			if let Ok(mut application) = cell.try_borrow_mut() {
+				if let Some(application) = &mut *application {
+					application.update(time as f32);
+				} else {
+					// Drop our handle to this closure so that it will get cleaned
+					// up once we return.
+					let _ = moved_closure.borrow_mut().take();
+					return;
+				}
 			} else {
-				panic!("No app");
+				let _ = moved_closure.borrow_mut().take();
+				return;
 			}
 		});
 
@@ -212,8 +218,10 @@ pub fn with_assets(asset_map: Map, code: Option<String>) -> Result<(), JsValue> 
 		canvas.set_width(width);
 		canvas.set_height(height);
 		APPLICATION_CELL.with(|cell| {
-			if let Some(application) = &mut *cell.borrow_mut() {
-				application.resize(width, height);
+			if let Ok(mut application) = cell.try_borrow_mut() {
+				if let Some(application) = &mut *application {
+					application.resize(width, height);
+				}
 			}
 		});
 	}) as Box<dyn FnMut()>);
