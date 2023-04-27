@@ -216,7 +216,7 @@ impl OpenGl {
 				self.font.render_glyphs("The quick brown fox jumped over the lazy dog", "regular", pos, 0.5, text_instance_buffer);
 				let pos = glam::Vec2::new(game_state.viewport.x as f32 - 200., 20.);
 				self.font
-					.render_glyphs(&format!("Peek: {}ms", game_state.time.peak_frametime().round()), "regular", pos, 0.25, text_instance_buffer);
+					.render_glyphs(&format!("Peek: {}ms", game_state.time.peak_frametime().round()), "regular", pos, 0.3, text_instance_buffer);
 				self.context.bind_vertex_array(None);
 				self.context.bind_texture(glow::TEXTURE_2D, None);
 			}

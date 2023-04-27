@@ -185,6 +185,9 @@ def plot(normalised_x, normalised_y, max_x, max_y, colours):
 
 	plt.show()
 
+def write_file(np_array):
+	with open("../assets/map.txt", "wb") as f:
+		f.write(np_array)
 
 from pyproj import CRS, Transformer
 crs_4326 = CRS.from_epsg(4326) # north then east
@@ -207,9 +210,9 @@ class ImageSampler:
 	image: np.ndarray
 	bounds_min: Point
 	size: Point
-	def get_pixel(self, x: int, y: int) -> float:
-		return self.image[min(self.image.shape[0] - 1, y)][min(self.image.shape[1] - 1, x)]
-	def get_hex(self, x: int, y:int) -> float:
+	def get_pixel(self, coord: Tuple[int, int]) -> int:
+		return self.image[min(self.image.shape[0] - 1, coord[1])][min(self.image.shape[1] - 1, coord[0])]
+	def get_hex(self, x: int, y:int) -> Tuple[int, int] | None:
 		
 		global ranges
 		svg_units = Point(offset_x(x, y)  , float(y) )
@@ -224,6 +227,8 @@ class ImageSampler:
 		robin_units = Point(robin_units.x, robin_units.y)
 		
 		lat_long = robin_to_lat_long.transform(robin_units.x, robin_units.y)
+		if lat_long[0] < -90 or lat_long[0] > 90 or lat_long[1] < -90 or lat_long[1] > 90:
+			return None
 		
 		nasa = lat_long_to_nasa.transform(lat_long[0],lat_long[1])
 		
@@ -231,19 +236,13 @@ class ImageSampler:
 
 		x = min(self.image.shape[1],max(0, int(normalised_pos.x * self.image.shape[1])))
 		y = min(self.image.shape[0],max(0 , int(normalised_pos.y * self.image.shape[0])))
-		
-		sample = 0
-		for offsetx in [0,1,-1,2,-2]:
-			for offsety in [0,1,-1,2,-2]:
-				sample =self.get_pixel( min(self.image.shape[1],max(0, x+offsetx*10)), min(self.image.shape[0],max(0, y+offsety*10)))
-				if sample > 5:
-					return sample
-		
-		return sample
+		return (min(self.image.shape[1],max(0, x)), min(self.image.shape[0],max(0, y)))
+
 	
 	def get_colour(self, x: int, y:int) -> Tuple[float, float, float]:
-		val = self.get_hex(x,y) / 255
-		return (1, val, y)
+		pos = self.get_hex(x,y)
+		val = 1 if pos == None else self.get_pixel(pos) / 255
+		return (1, val, 1)
 	
 	def __init__(self, file_name: str, normalised_x: List[int], normalised_y: List[int]):
 		import imageio.v3 as iio
@@ -283,6 +282,9 @@ with open("map_base.svg") as svg_file:
 	apothem = compute_apothem()
 
 	x_positions = [value.pos.x for value in path_strings]
+
+	
+
 	offset_left = 0
 
 
@@ -290,13 +292,69 @@ with open("map_base.svg") as svg_file:
 	normalised_x = [xy_to_col_int(x_positions[index], normalised_y[index]) for index in range(len(path_strings))]
 	max_x = max(normalised_x)
 
-	height = ImageSampler('MOD_NDVI_M_2023-01_vegitation.PNG', normalised_x, normalised_y)
-	# MOD10C1_M_SNOW_2022-02_snow.PNG
-	# MOD_NDVI_M_2023-01_vegitation.PNG
-	# SRTM_RAMP2_TOPO_2000.PNG
+	names = list(map(lambda path: path.name[:path.name.rfind('_')], path_strings))
+	names_register = list(set(names))
+	names_register.sort()
+
+	def compute_index(name):
+		index = bisect.bisect_left(names_register, name)
+	
+		if names_register[index] == name:
+			return index
+		print("Not found")
+		return 254
+	section = list(zip(map(compute_index, names), normalised_x, normalised_y))
+	section.sort(key = lambda s: s[1]*max_y+s[2], reverse=True)
 
 
-	c = [height.get_colour(normalised_x[index], normalised_y[index], actual_poses) for index in range(len(normalised_y))]
+	snow = ImageSampler('MOD10C1_M_SNOW_2022-02_snow.PNG', normalised_x, normalised_y)
+	vegitation = ImageSampler('MOD_NDVI_M_2023-01_vegitation.PNG', normalised_x, normalised_y)
+	topo = ImageSampler('SRTM_RAMP2_TOPO_2000.PNG', normalised_x, normalised_y)
+
+	width = max_x + 1
+	height = max_y + 1
+
+	#normalised_x = [x % width for x in range(width * height)]
+	#normalised_y = [x // width for x in range(width * height)]
+	#c = [topo.get_colour(normalised_x[index], normalised_y[index]) for index in range(len(normalised_y))]
 	print(ranges)
 	#c = "blue"
-	plot(normalised_x, normalised_y, max_x, max_y, c)
+	#plot(normalised_x, normalised_y, max_x, max_y, c)
+
+	n = 500
+	byte = n.to_bytes(4, byteorder='big', signed=True)
+	print(byte)
+	
+	channels = 4
+
+	a = bytearray(width.to_bytes(2, byteorder="little") + height.to_bytes(2, byteorder="little") + channels.to_bytes(2, byteorder="little"))
+	a += len(names_register).to_bytes(1, byteorder="little")
+	for name in names_register:
+		name_bytes = bytes(name, encoding="utf8")
+		a += len(name_bytes).to_bytes(1, byteorder="little")
+		a += name_bytes
+
+	data_start = len(a)
+	for x in range(0, max_x+1):
+		for y in range(0,max_y+1):
+			next_section = len(section) == 0 or section[len(section)-1]
+			if next_section != True and next_section[1] == x and next_section[2] == y:
+				section.pop()
+				a.append(next_section[0])
+			else:
+				a.append(254)
+
+			pos = snow.get_hex(x,y)
+			
+			if pos == None:
+				a.append(255)
+				a.append(255)
+				a.append(255)
+			else:
+				a.append(snow.get_pixel(pos))
+				a.append(vegitation.get_pixel(pos))
+				a.append(topo.get_pixel(pos))
+
+
+
+	write_file(a)

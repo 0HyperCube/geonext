@@ -4,6 +4,7 @@ pub use glam::{IVec2, UVec2, Vec2};
 use renderer::OpenGl;
 mod camera;
 mod events;
+mod map;
 mod renderer;
 mod terrain;
 mod time;
@@ -19,10 +20,13 @@ pub struct Assets(pub HashMap<String, Vec<u8>>);
 
 impl Assets {
 	pub fn assets() -> &'static [(&'static str, &'static str)] {
-		&[("regular", "assets/RobotoSlab-Regular.ttf"), ("heightmap", "assets/heightmap.jpeg")]
+		&[("regular", "assets/RobotoSlab-Regular.ttf"), ("heightmap", "assets/heightmap.jpeg"), ("map", "assets/map.txt")]
 	}
 	pub fn get<'a>(&'a self, asset: &'static str) -> &'a Vec<u8> {
 		self.0.get(asset).expect(&format!("Failed to load asset {asset}!"))
+	}
+	pub fn take(&mut self, asset: &'static str) -> Vec<u8> {
+		self.0.remove(asset).expect(&format!("Failed to load asset {asset}!"))
 	}
 }
 #[derive(Debug, Default)]
@@ -33,6 +37,7 @@ pub struct GameState {
 	pub camera: Camera,
 	pub terrain: terrain::Terrain,
 	pub input: InputSystem,
+	pub map: map::Map,
 }
 impl GameState {
 	#[inline]
@@ -102,10 +107,11 @@ impl core::fmt::Debug for Application {
 
 impl Application {
 	/// Constructs a new application based on the specified game state, glow context and assets
-	pub fn new(mut game_state: GameState, context: glow::Context, assets: Assets) -> Result<Self, ErrorKind> {
+	pub fn new(mut game_state: GameState, context: glow::Context, mut assets: Assets) -> Result<Self, ErrorKind> {
 		let mut renderer = OpenGl::new(context);
+		game_state.map.load(assets.take("map"));
 		game_state.terrain.load(&assets.get("heightmap"));
-		let (vertices, indices) = game_state.terrain.generate_terrain();
+		let (vertices, indices) = game_state.map.generate_terrain();
 		renderer.init(&vertices, &indices)?;
 		renderer.font.add_font(&assets, "regular");
 

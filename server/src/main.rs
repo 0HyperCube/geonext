@@ -300,11 +300,13 @@ fn initalise_filewatcher(absolute_owned_client_path: PathBuf) -> notify::Result<
 /// Responds to a request when the client is recompiled
 #[cfg(feature = "debugging")]
 async fn get_reload(req: Request<State>) -> tide::Result {
+	error!("Wait hot");
 	req.state().hot_reload_reciever.recv().await.unwrap();
 
 	let mut res = Response::new(200);
 	res.set_content_type("text/html;charset=utf-8");
 	let body = "Plz reload";
+	error!("Info sending hot reload");
 
 	res.set_body(body);
 	Ok(res)
