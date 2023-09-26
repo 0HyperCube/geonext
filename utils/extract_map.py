@@ -1,5 +1,5 @@
 import math
-from typing import List, Tuple
+from typing import Iterator, List, Tuple
 from xml.dom import minidom
 from dataclasses import dataclass
 import copy
@@ -47,6 +47,7 @@ def parse_svg_float(index: int, svg: str) -> Tuple[float, int]:
 	while (
 		index < len(svg)
 		and svg[index] != " "
+		and svg[index] != ","
 		and not svg[index] in svg_commands
 		and svg[index] != "-"
 		and (not parsed_decimal_point or svg[index] != ".")
@@ -56,7 +57,7 @@ def parse_svg_float(index: int, svg: str) -> Tuple[float, int]:
 			parsed_decimal_point = True
 		index += 1
 
-	while index < len(svg) and svg[index] == " ":
+	while index < len(svg) and svg[index] in ", ":
 		index += 1
 	return (float(result), index)
 
@@ -172,6 +173,23 @@ def offset_x(x: int, y: int) -> float:
 	"""Converts the integer column value to a float, shifting by a half if necessary"""
 	return x - (y%2)*.5
 
+def to_axial(x: int, y: int) -> Tuple[int, int]:
+	q = x - (y + (y&1)) / 2
+	r = y
+	if round(q) != q:
+		raise TypeError()
+	return (int(q), r)
+
+def from_axial(axial: Tuple[int, int]) -> Tuple[int, int]:
+	(q,r) = axial
+	col = q + (r + (r&1)) / 2
+	row = r
+	return col, row
+
+def neighbours(axial: Tuple[int, int]) -> Iterator[Tuple[int, int]]:
+	for (offset_q, offset_r) in [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)]:
+		yield (axial[0] + offset_q, axial[1] + offset_r)
+
 def plot(normalised_x, normalised_y, max_x, max_y, colours):
 	"""Plot the map in matplotlib"""
 	import matplotlib.pyplot as plt
@@ -190,9 +208,10 @@ def write_file(np_array):
 		f.write(np_array)
 
 from pyproj import CRS, Transformer
-crs_4326 = CRS.from_epsg(4326) # north then east
+
+crs_4326 = CRS.from_epsg(4326) # north then east - crs is used by nasa
 long_lat1 = CRS.from_proj4("+proj=latlon")
-robin = CRS.from_proj4("+proj=robin +R=1000") # East then north
+robin = CRS.from_proj4("+proj=robin +R=1000") # East then north - robin is used by mapchart
 long_lat2 = CRS.from_proj4("+proj=latlon +R=1000")
 
 lat_long_to_nasa = Transformer.from_crs(long_lat1, crs_4326, always_xy=True)
@@ -268,45 +287,53 @@ with open("map_base.svg") as svg_file:
 	# Don't leak memory
 	doc.unlink()
 
-	def get_y(x):
-		print(x)
-		return x[0].y
-
+	# Extract x and y positions for each hex
 	y_positions = [value.pos.y for value in path_strings]
 	radius = compute_radius(y_positions)
 
-	offset_top = 0
+	offset_top, offset_left = 0,0
 	normalised_y = [y_to_row_int(y) for y in y_positions]
 	max_y = max(normalised_y)
 
 	apothem = compute_apothem()
 
 	x_positions = [value.pos.x for value in path_strings]
-
-	
-
-	offset_left = 0
-
-
-	
 	normalised_x = [xy_to_col_int(x_positions[index], normalised_y[index]) for index in range(len(path_strings))]
 	max_x = max(normalised_x)
 
+	# Get country names for each hex, and create a mapping from u8 -> country name
 	names = list(map(lambda path: path.name[:path.name.rfind('_')], path_strings))
 	names_register = list(set(names))
 	names_register.sort()
 
+	# Convert a country name to the index used in the mapping
 	def compute_index(name):
 		index = bisect.bisect_left(names_register, name)
-	
 		if names_register[index] == name:
 			return index
 		print("Not found")
 		return 254
+
+	# Store (country name index, x, y) in a sorted list
 	section = list(zip(map(compute_index, names), normalised_x, normalised_y))
 	section.sort(key = lambda s: s[1]*max_y+s[2], reverse=True)
 
+	# Export axial coordinate files
+	axial_coords = list(map(to_axial, normalised_x, normalised_y))
+	hex_names = list(map(lambda path: path.name, path_strings))
+	axial_hex_lookup = dict(zip(axial_coords, hex_names))
+	neighbour_lookup = dict(zip(hex_names, map(lambda coord: list(map(axial_hex_lookup.__getitem__, filter(axial_hex_lookup.__contains__, neighbours(coord)))), axial_coords)))
+	print(neighbour_lookup)
+	import json
+	axial_json = json.dumps(dict(map(lambda b: (str(b[0]), b[1]), axial_hex_lookup.items())), sort_keys=True, indent=4)
+	with open("../assets/axial-coordinates.json", "w+") as f:
+		f.write(axial_json)
+	neighbours_json = json.dumps(neighbour_lookup, sort_keys=True, indent=4)
+	with open("../assets/neighbours.json", "w+") as f:
+		f.write(neighbours_json)
 
+
+	# Load nasa data maps
 	snow = ImageSampler('MOD10C1_M_SNOW_2022-02_snow.PNG', normalised_x, normalised_y)
 	vegitation = ImageSampler('MOD_NDVI_M_2023-01_vegitation.PNG', normalised_x, normalised_y)
 	topo = ImageSampler('SRTM_RAMP2_TOPO_2000.PNG', normalised_x, normalised_y)
@@ -314,26 +341,26 @@ with open("map_base.svg") as svg_file:
 	width = max_x + 1
 	height = max_y + 1
 
+	# Matplotlib for testing
 	#normalised_x = [x % width for x in range(width * height)]
 	#normalised_y = [x // width for x in range(width * height)]
 	#c = [topo.get_colour(normalised_x[index], normalised_y[index]) for index in range(len(normalised_y))]
-	print(ranges)
-	#c = "blue"
-	#plot(normalised_x, normalised_y, max_x, max_y, c)
-
-	n = 500
-	byte = n.to_bytes(4, byteorder='big', signed=True)
-	print(byte)
+	#plot(normalised_x, normalised_y, max_x, max_y, "blue")
 	
 	channels = 4
 
+	# Header info, u16 for width, u16 for height, u16 for channel count
 	a = bytearray(width.to_bytes(2, byteorder="little") + height.to_bytes(2, byteorder="little") + channels.to_bytes(2, byteorder="little"))
+	
+	# u8 for number of country names
 	a += len(names_register).to_bytes(1, byteorder="little")
+	# Encode the utf8 of the country names, starting each string with a u8 for the length
 	for name in names_register:
 		name_bytes = bytes(name, encoding="utf8")
 		a += len(name_bytes).to_bytes(1, byteorder="little")
 		a += name_bytes
 
+	# Encode the country name index, snow and vegitation for each hex, top to bottom, left to right
 	data_start = len(a)
 	for x in range(0, max_x+1):
 		for y in range(0,max_y+1):
