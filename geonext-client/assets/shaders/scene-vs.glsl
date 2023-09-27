@@ -14,5 +14,6 @@ void main()
 {
 	gl_Position = projection * view * model * vec4(aPos, 1.0);
 	// A test colour to preview heights
-	vertexColour = vec4(vec3(aPos.z / 10.), 1.0) + addColour;
+	vec4 height = vec4(vec3(aPos.z / 10.), 1.0);
+	vertexColour = vec4(aColour, 1.) + addColour;
 }

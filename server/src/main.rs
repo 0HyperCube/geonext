@@ -139,7 +139,7 @@ struct SocketContext<'a> {
 
 async fn identify(context: SocketContext<'_>, code: String) -> anyhow::Result<()> {
 	let access_token = exchange_code(&code, context.request).await.context("Exchange discord oauth code")?;
-	let (id, username) = get_identity(&access_token).await.context("Get discord identity")?;
+	let (_id, username) = get_identity(&access_token).await.context("Get discord identity")?;
 	context.stream.send(&geonext_shared::ServerMessage::AuthAccepted { username }).await?;
 	Ok(())
 }
@@ -314,8 +314,7 @@ async fn get_reload(req: Request<State>) -> tide::Result {
 
 /// Compiles the client using `wasm-pack`, returning if successful
 fn compile_client(path: &std::path::Path) -> bool {
-	use std::io::{self, Write};
-	use std::process::{Command, Stdio};
+	use std::process::Command;
 
 	println!("\n{}\n\nCompiling client at {}\n\n", "=".repeat(100), path.to_str().unwrap_or_default());
 

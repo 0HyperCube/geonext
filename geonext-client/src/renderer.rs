@@ -7,8 +7,11 @@ use crate::{ErrorKind, GameState};
 
 mod program;
 use program::*;
+
+use self::text::Text;
 mod atlas;
 pub mod text;
+pub mod ui_layout;
 
 pub struct Programs {
 	scene_program: Program,
@@ -49,7 +52,7 @@ impl OpenGl {
 	}
 
 	/// Initalise opengl
-	pub fn init(&mut self, verts: &[f32], indices: &[usize]) -> Result<(), ErrorKind> {
+	pub fn init(&mut self, verts: &[f32], indices: &[u32]) -> Result<(), ErrorKind> {
 		unsafe {
 			self.context.enable(glow::DEPTH_TEST);
 			self.context.enable(glow::BLEND);
@@ -180,7 +183,7 @@ impl OpenGl {
 
 	/// Renders a frame
 	pub fn rerender(&mut self, game_state: &GameState) {
-		if let (Some(vertex_array), Some(text_vertex_array), Some(text_vertex_buffer), Some(text_instance_buffer), Some(programs)) =
+		if let (Some(vertex_array), Some(text_vertex_array), Some(_text_vertex_buffer), Some(text_instance_buffer), Some(programs)) =
 			(self.vert_arr, self.text_vertex_array, self.text_vertex_buffer, self.text_instance_buffer, &self.programs)
 		{
 			let Programs {
@@ -195,8 +198,8 @@ impl OpenGl {
 				scene_program.bind();
 				scene_program.set_vec4("addColour", Vec4::ZERO);
 
-				let projection = Mat4::perspective_rh_gl(45f32.to_radians(), game_state.aspect_ratio(), 0.1, 1000.);
-				let view = game_state.camera.to_matrix(&game_state.terrain);
+				let projection = game_state.projection_mat();
+				let view = game_state.view_mat();
 				let model = Mat4::from_rotation_x(0.);
 
 				scene_program.set_mat4("projection", projection);
@@ -212,11 +215,15 @@ impl OpenGl {
 				text_program.set_mat4("projection", projection);
 				self.context.active_texture(glow::TEXTURE0);
 				self.context.bind_vertex_array(Some(text_vertex_array));
-				let pos = glam::Vec2::new(20., game_state.viewport.y as f32 - 20.);
-				self.font.render_glyphs("The quick brown fox jumped over the lazy dog", "regular", pos, 0.5, text_instance_buffer);
+
 				let pos = glam::Vec2::new(game_state.viewport.x as f32 - 200., 20.);
-				self.font
-					.render_glyphs(&format!("Peek: {}ms", game_state.time.peak_frametime().round()), "regular", pos, 0.3, text_instance_buffer);
+				let framerate = Text::new(&mut self.font, &format!("Peek: {}ms", game_state.time.peak_frametime().round()), "regular");
+				framerate.render_glyphs(&mut self.font, pos, 0.3, text_instance_buffer);
+
+				let pos = glam::Vec2::new(game_state.viewport.x as f32 - 200., 20.);
+				let framerate = Text::new(&mut self.font, "GeoNext Alpha", "regular");
+				framerate.render_glyphs(&mut self.font, pos, 0.3, text_instance_buffer);
+
 				self.context.bind_vertex_array(None);
 				self.context.bind_texture(glow::TEXTURE_2D, None);
 			}

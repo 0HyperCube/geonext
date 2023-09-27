@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use glam::Mat4;
 pub use glam::{IVec2, UVec2, Vec2};
 use renderer::OpenGl;
 mod camera;
@@ -48,6 +49,13 @@ impl GameState {
 		self.camera.position = self.terrain.size.as_vec2() / 2.;
 
 		event_layers.push(Self::update_camera);
+		event_layers.push(Self::hover);
+	}
+	pub fn projection_mat(&self) -> Mat4 {
+		Mat4::perspective_rh_gl(45f32.to_radians(), self.aspect_ratio(), 0.1, 1000.)
+	}
+	pub fn view_mat(&self) -> Mat4 {
+		self.camera.to_matrix(&self.terrain)
 	}
 	fn update_camera(&mut self, event: &EventType) -> bool {
 		match event {
@@ -89,6 +97,17 @@ impl GameState {
 			}
 
 			_ => false,
+		}
+	}
+
+	fn hover(&mut self, event: &EventType) -> bool {
+		if let EventType::PointerMove(pos) = event {
+			let mat = self.projection_mat() * self.view_mat();
+			self.map.update_hover(mat, pos.as_vec2() / self.viewport.as_vec2());
+
+			true
+		} else {
+			false
 		}
 	}
 }

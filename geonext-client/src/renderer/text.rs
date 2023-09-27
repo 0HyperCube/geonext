@@ -12,10 +12,65 @@ use super::atlas::Atlas;
 #[derive(Debug, Default)]
 struct ParsedFonts(HashMap<&'static str, Font>);
 
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct GlyphCache {
 	pos: UVec2,
 	metrics: Metrics,
+}
+
+pub struct Text {
+	glyphs: Vec<GlyphCache>,
+}
+
+impl Text {
+	pub fn new(cache: &mut FontCache, text: &str, font_name: &'static str) -> Self {
+		unsafe { cache.context.bind_texture(glow::TEXTURE_2D, Some(cache.texture.unwrap())) };
+
+		let font: &Font = cache.parsed_fonts.0.get(font_name).expect("Tried to use unloaded font");
+
+		let mut glyphs = Vec::new();
+		for c in text.chars() {
+			glyphs.push(*FontCache::load_glyph(&mut cache.glyphs, &mut cache.atlas, &cache.context, c, font));
+		}
+
+		unsafe { cache.context.bind_texture(glow::TEXTURE_2D, None) };
+		Self { glyphs }
+	}
+	pub fn render_glyphs(&self, cache: &mut FontCache, mut pos: Vec2, scale: f32, instances: <glow::Context as glow::HasContext>::Buffer) {
+		unsafe { cache.context.bind_texture(glow::TEXTURE_2D, Some(cache.texture.unwrap())) };
+
+		let mut instanced_data = Vec::with_capacity(self.glyphs.len());
+		for glyph in &self.glyphs {
+			let render_pos = Vec2::new(pos.x + glyph.metrics.xmin as f32 * scale, pos.y - (glyph.metrics.height as f32 + glyph.metrics.ymin as f32) * scale);
+			let size = Vec2::new(glyph.metrics.width as f32, glyph.metrics.height as f32);
+
+			let texture_size = Vec2::splat(TEXTURE_SIZE as f32);
+			let uv_min = glyph.pos.as_vec2() / texture_size;
+			let uv_max = (glyph.pos.as_vec2() + size) / texture_size;
+
+			let size = size * scale;
+
+			let verticies = [(render_pos, size), (uv_min, uv_max - uv_min)];
+			instanced_data.push(verticies);
+			// now advance cursors for next glyph
+			pos += Vec2::new(glyph.metrics.advance_width, glyph.metrics.advance_height) * scale;
+		}
+
+		unsafe {
+			let (_, src_data, _) = instanced_data.align_to();
+			let instance_count = instanced_data.len() as i32;
+			//info!("len {} expected: {}", x.len(), 4 * 8);
+			cache.context.bind_buffer(glow::ARRAY_BUFFER, Some(instances));
+			cache
+				.context
+				.buffer_data_size(glow::ARRAY_BUFFER, std::mem::size_of::<f32>() as i32 * 8 * instance_count, glow::DYNAMIC_DRAW);
+			cache.context.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, src_data);
+			cache.context.bind_buffer(glow::ARRAY_BUFFER, None);
+			// render quad
+			cache.context.draw_arrays_instanced(glow::TRIANGLES, 0, 6, instance_count);
+		}
+		unsafe { cache.context.bind_texture(glow::TEXTURE_2D, None) };
+	}
 }
 
 /// Stores peices of text rendering between frames to increase performance
@@ -94,43 +149,6 @@ impl FontCache {
 			}
 			GlyphCache { pos, metrics }
 		})
-	}
-	pub fn render_glyphs(&mut self, text: &str, font_name: &'static str, mut pos: Vec2, scale: f32, instances: <glow::Context as glow::HasContext>::Buffer) {
-		unsafe { self.context.bind_texture(glow::TEXTURE_2D, Some(self.texture.unwrap())) };
-
-		let font = self.parsed_fonts.0.get(font_name).expect("Tried to use unloaded font");
-
-		let mut instanced_data = Vec::with_capacity(text.len());
-		for c in text.chars() {
-			let glyph = Self::load_glyph(&mut self.glyphs, &mut self.atlas, &self.context, c, font);
-			let render_pos = Vec2::new(pos.x + glyph.metrics.xmin as f32 * scale, pos.y - (glyph.metrics.height as f32 + glyph.metrics.ymin as f32) * scale);
-			let size = Vec2::new(glyph.metrics.width as f32, glyph.metrics.height as f32);
-
-			let texture_size = Vec2::splat(TEXTURE_SIZE as f32);
-			let uv_min = glyph.pos.as_vec2() / texture_size;
-			let uv_max = (glyph.pos.as_vec2() + size) / texture_size;
-
-			let size = size * scale;
-
-			let verticies = [(render_pos, size), (uv_min, uv_max - uv_min)];
-			instanced_data.push(verticies);
-			// now advance cursors for next glyph
-			pos += Vec2::new(glyph.metrics.advance_width, glyph.metrics.advance_height) * scale;
-		}
-
-		unsafe {
-			let (_, src_data, _) = instanced_data.align_to();
-			let instance_count = instanced_data.len() as i32;
-			//info!("len {} expected: {}", x.len(), 4 * 8);
-			self.context.bind_buffer(glow::ARRAY_BUFFER, Some(instances));
-			self.context
-				.buffer_data_size(glow::ARRAY_BUFFER, std::mem::size_of::<f32>() as i32 * 8 * instance_count, glow::DYNAMIC_DRAW);
-			self.context.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, src_data);
-			self.context.bind_buffer(glow::ARRAY_BUFFER, None);
-			// render quad
-			self.context.draw_arrays_instanced(glow::TRIANGLES, 0, 6, instance_count);
-		}
-		unsafe { self.context.bind_texture(glow::TEXTURE_2D, None) };
 	}
 }
 

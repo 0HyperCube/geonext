@@ -3,3 +3,4 @@ members = ["geonext-client", "server", "wasm-frontend", "geonext-shared"]
 
 exclude = ["poisson", "femtovg"]
 
+resolver = "2"
