@@ -7,19 +7,16 @@ edition = "2021"
 
 [dependencies]
 notify = { git = "https://github.com/notify-rs/notify.git", optional = true, default-features = false }
-tide = { version = "0.16", default-features = false }
+tokio = { version = "1.32", features = ["macros", "sync", "rt-multi-thread"] }
+tokio-stream = "0.1.14"
+warp = "0.3"
+futures-util = "0.3"
 async-h1 = { version = "2.2.3", default-features = false }
 http-types = { version = "2", default-features = false }
 surf = { version = "2", default-features = false, features = ["h1-client"] }
 form_urlencoded = { version = "1", default-features = false}
 serde_json = { version = "1", default-features = false }
-async-std = { version = "1.12", default-features = false, features = [
-	"async-global-executor",
-	"futures-lite",
-	"attributes"
-	] }
 anyhow = { version = "1.0", default-features = false }
-tide-websockets = { version = "0.4", default-features = false }
 log = "0.4"
 simplelog = "*"
 serde = { version = "1", default-features = false }

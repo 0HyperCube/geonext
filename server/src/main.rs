@@ -1,17 +1,18 @@
-use std::path::PathBuf;
-
 use anyhow::{anyhow, Context};
-use async_std::fs::read_to_string;
-use tide::{Request, Response};
+use futures_util::{stream::SplitSink, SinkExt};
+use http_types::StatusCode;
+use std::path::PathBuf;
+use tokio::fs::read_to_string;
+use warp::filters::ws::{Message, WebSocket};
+use warp::Filter;
 
 #[macro_use]
 extern crate log;
 
 #[cfg(feature = "debugging")]
-use async_std::channel::*;
-#[cfg(feature = "debugging")]
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use tide_websockets::WebSocketConnection;
+#[cfg(feature = "debugging")]
+use tokio::sync::watch;
 
 // Use simplelog with a file and the console.
 fn init_logger() {
@@ -20,7 +21,7 @@ fn init_logger() {
 
 	CombinedLogger::init(vec![
 		TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
-		WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("CheeseBot.log").unwrap()),
+		WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("geonext_server.log").unwrap()),
 	])
 	.unwrap();
 
@@ -29,9 +30,6 @@ fn init_logger() {
 
 #[derive(Clone)]
 pub struct State {
-	#[cfg(feature = "debugging")]
-	/// Sends an empty value whenever the client is rebuilt (in debugging mode)
-	hot_reload_reciever: Receiver<()>,
 	/// The file system path to the client folder (passed in as command line arg)
 	absolute_owned_client_path: PathBuf,
 }
@@ -57,10 +55,8 @@ fn compute_path() -> anyhow::Result<PathBuf> {
 	Ok(geonext_path.join("wasm-frontend"))
 }
 
-// Because we're running a web server we need a runtime,
-// for more information on async runtimes, please check out [async-std](https://github.com/async-rs/async-std)
-#[async_std::main]
-async fn main() -> tide::Result<()> {
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
 	init_logger();
 
 	// Extract the path from the command line args
@@ -76,69 +72,93 @@ async fn main() -> tide::Result<()> {
 
 	let serve_path = absolute_owned_client_path.clone();
 
-	// We set up a web server using [Tide](https://github.com/http-rs/tide)
-	let mut app = tide::with_state(State {
-		#[cfg(feature = "debugging")]
-		hot_reload_reciever,
-		absolute_owned_client_path,
-	});
-
-	app.at("/").get(get_index);
-
-	#[cfg(feature = "debugging")]
-	app.at("/__reload").get(get_reload);
-
-	app.at("/__auth").get(get_index);
-
-	app.at("/__stream").get(tide_websockets::WebSocket::new(|request, mut stream| async move {
-		use async_std::stream::StreamExt;
-		while let Some(Ok(tide_websockets::Message::Text(input))) = stream.next().await {
-			let stream = Stream { stream: &mut stream };
-			if let Err(e) = websocket(&request, &input, &stream).await.context("Handling websocket message") {
-				error!("Message: {input}\nError: {e:?}");
-				stream.send(&geonext_shared::ServerMessage::Error { message: format!("{e:?}") }).await?;
-			}
-		}
-
-		Ok(())
-	}));
-
 	let mut assets = serve_path.parent().unwrap().to_path_buf();
 	assets.push("assets");
-	app.at("/assets").serve_dir(&assets).unwrap();
+	let index_path = absolute_owned_client_path.clone();
+	let index = warp::path::end().and_then(move || {
+		let state = State {
+			absolute_owned_client_path: index_path.clone(),
+		};
+		get_index(state)
+	});
+	let assets = warp::path("assets").and(warp::fs::dir(assets));
+	let ws = warp::path("__stream").and(warp::ws()).map(move |ws: warp::ws::Ws| {
+		let state = State {
+			absolute_owned_client_path: absolute_owned_client_path.clone(),
+		};
+		// And then our closure will be called when it completes...
+		ws.on_upgrade(|current_websocket| async move {
+			// Just echo all messages back...
+			use futures_util::stream::StreamExt;
+			let (mut tx, mut rx) = current_websocket.split();
+			while let Some(Ok(message)) = rx.next().await {
+				let Ok(input) = message.to_str() else {
+					error!("Recieved message of bad type");
+					continue;
+				};
+				let mut stream = Stream { stream: &mut tx };
+				let message = {
+					let websocket = handle_socket_msg(&state, input, &mut stream).await.context("Handling websocket message");
 
-	app.at("/").serve_dir(serve_path).unwrap();
-	app.listen("127.0.0.1:8080").await?;
+					let Err(e) = websocket else { continue };
+					error!("Message: {input}\nError: {e:?}");
+					format!("{e:?}")
+				};
+
+				let _ = stream.send(&geonext_shared::ServerMessage::Error { message }).await;
+			}
+		})
+	});
+	let routes = index.or(ws).or(assets).or(warp::fs::dir(serve_path));
+
+	#[cfg(feature = "debugging")]
+	let final_routes = routes
+		.or(warp::path("__reload").and_then(move || {
+			let mut hot_reload_reciever = hot_reload_reciever.clone();
+			async move {
+				hot_reload_reciever.borrow_and_update();
+				if let Err(e) = hot_reload_reciever.changed().await {
+					warn!("Hot reload error {e:?}");
+					return Err(warp::reject());
+				}
+				Ok("Plz reload")
+			}
+		}))
+		.with(warp::cors().allow_any_origin());
+	#[cfg(not(feature = "debugging"))]
+	let final_routes = routes.with(warp::cors().allow_any_origin());
+
+	warp::serve(final_routes).run(([0, 0, 0, 0, 0, 0, 0, 0], 8080)).await;
 
 	Ok(())
 }
 
-async fn websocket(request: &Request<State>, input: &str, stream: &Stream<'_>) -> anyhow::Result<()> {
+async fn handle_socket_msg<'a>(state: &'a State, input: &'a str, stream: &'a mut Stream<'_>) -> anyhow::Result<()> {
 	let serde_json: geonext_shared::ClientMessage = serde_json::from_str(input).with_context(|| format!("Decode websocket json \"{input}\""))?;
-	let context = SocketContext { request, input, stream };
+	let context = SocketContext { state, input, stream };
 	match serde_json {
 		geonext_shared::ClientMessage::Auth { code } => identify(context, code).await.context("Authentication message"),
 	}
 }
 
 struct Stream<'a> {
-	stream: &'a mut WebSocketConnection,
+	stream: &'a mut SplitSink<WebSocket, Message>,
 }
 impl<'a> Stream<'a> {
-	async fn send(&self, message: &geonext_shared::ServerMessage) -> anyhow::Result<()> {
+	async fn send(&mut self, message: &geonext_shared::ServerMessage) -> anyhow::Result<()> {
 		let response = serde_json::to_string(message).expect("Serialising should sucseed");
-		self.stream.send_string(response).await.map_err(|e| anyhow!("Failed to send json {e:?}"))
+		self.stream.send(Message::text(response)).await.map_err(|e| anyhow!("Failed to send json {e:?}"))
 	}
 }
 
-struct SocketContext<'a> {
-	request: &'a Request<State>,
+struct SocketContext<'a, 'b: 'a> {
+	state: &'a State,
 	input: &'a str,
-	stream: &'a Stream<'a>,
+	stream: &'a mut Stream<'b>,
 }
 
-async fn identify(context: SocketContext<'_>, code: String) -> anyhow::Result<()> {
-	let access_token = exchange_code(&code, context.request).await.context("Exchange discord oauth code")?;
+async fn identify(context: SocketContext<'_, '_>, code: String) -> anyhow::Result<()> {
+	let access_token = exchange_code(&code, context.state).await.context("Exchange discord oauth code")?;
 	let (_id, username) = get_identity(&access_token).await.context("Get discord identity")?;
 	context.stream.send(&geonext_shared::ServerMessage::AuthAccepted { username }).await?;
 	Ok(())
@@ -159,60 +179,66 @@ fn add_hot_reload_javascript(mut body: String) -> String {
 	body += r#"<!--Inserted hotreload script--> <script type="module">try {
 			console.info("initalised hotreaload");
 			await fetch("__reload")
-			console.info("hotreloading")
-			window.location.reload(true);
 		} catch (e){
 			console.warn("Failed to wait for hotreload.");
-		}</script>"#;
+		}
+		window.location.reload(true);
+		</script>"#;
 	body
 }
 
-async fn read_file(file_name: &'static str, req: &Request<State>) -> anyhow::Result<String> {
-	let mut owned_client_path = req.state().absolute_owned_client_path.clone();
+async fn read_file(file_name: &'static str, state: &State) -> anyhow::Result<String> {
+	let mut owned_client_path = state.absolute_owned_client_path.clone();
 	owned_client_path.push(file_name);
-	Ok(read_to_string(&owned_client_path).await.context("reading file")?)
+	Ok(read_to_string(&owned_client_path).await.with_context(|| format!("reading file {owned_client_path:?}"))?)
 }
 
-async fn insert_standard_head(mut body: String, req: &Request<State>) -> anyhow::Result<String> {
+async fn insert_standard_head(mut body: String, state: &State) -> anyhow::Result<String> {
 	let insert_below = r#"<html lang="en">"#;
 	if let Some(pos) = body.find(insert_below) {
-		body.insert_str(pos + insert_below.len(), &read_file("standard_head.html", req).await.context("Insert standard head")?)
+		body.insert_str(pos + insert_below.len(), &read_file("standard_head.html", state).await.context("Insert standard head")?)
 	}
 	Ok(body)
 }
 
+async fn generate_index(state: &State) -> anyhow::Result<String> {
+	insert_standard_head(read_file("index.html", &state).await?, &state).await
+}
+
 /// Returns the index.html file, inserting a hot reload script if debug is enabled
-async fn get_index(req: Request<State>) -> tide::Result {
-	if !req.url().query_pairs().any(|(key, _)| key == "code") {
-		let index = insert_standard_head(read_file("index.html", &req).await?, &req).await?;
+async fn get_index(state: State) -> Result<warp::reply::Html<String>, warp::Rejection> {
+	let index = match generate_index(&state).await {
+		Ok(index) => index,
+		Err(e) => {
+			error!("Error {e:?}");
+			return Err(warp::reject());
+		}
+	};
 
-		let mut res = Response::new(200);
-		res.set_content_type("text/html;charset=utf-8");
-
-		#[cfg(feature = "debugging")]
-		res.set_body(add_hot_reload_javascript(index));
-
-		#[cfg(not(feature = "debugging"))]
-		res.set_body(index);
-
-		Ok(res)
-	} else {
-		let welcome = insert_standard_head(read_file("welcome.html", &req).await?, &req).await?;
-
-		let mut res = Response::new(200);
-		res.set_content_type("text/html;charset=utf-8");
-
-		res.set_body(welcome);
-
-		Ok(res)
+	#[cfg(feature = "debugging")]
+	{
+		Ok(warp::reply::html(add_hot_reload_javascript(index)))
 	}
+	#[cfg(not(feature = "debugging"))]
+	{
+		Ok(warp::reply::html(index))
+	}
+
+	// if let Some(code) = param.get("code") {
+	// 	info!("Logged in with code {code}");
+	// } else {
+	// 	// let welcome = insert_standard_head(read_file("welcome.html", &state).await.unwrap(), &state).await.unwrap();
+
+	// 	// Ok(warp::reply::html(welcome))
+	// }
 }
 
 const API_ENDPOINT: &str = "https://discord.com/api/v10";
 const CLIENT_ID: &str = "1072924944050159722";
+const GUILD_ID: &str = "891386654714122282";
 
-async fn exchange_code(code: &str, req: &Request<State>) -> anyhow::Result<String> {
-	let client_secret = read_file("client_secret.txt", req).await.context("Getting client secret file")?;
+async fn exchange_code(code: &str, state: &State) -> anyhow::Result<String> {
+	let client_secret = read_file("client_secret.txt", state).await.context("Getting client secret file")?;
 
 	let body = form_urlencoded::Serializer::new(String::new())
 		.append_pair("client_id", CLIENT_ID)
@@ -252,14 +278,23 @@ async fn get_identity(access_token: &str) -> anyhow::Result<(String, String)> {
 	let id = &response_json["id"];
 	let username = &response_json["username"];
 
-	Ok((
-		id.as_str().map(|x| x.to_string()).ok_or(anyhow!("No id: {response}"))?,
-		username.as_str().map(|x| x.to_string()).ok_or(anyhow!("No username: {response}"))?,
-	))
+	let id = id.as_str().map(|x| x.to_string()).ok_or(anyhow!("No id: {response}"))?;
+	let username = username.as_str().map(|x| x.to_string()).ok_or(anyhow!("No username: {response}"))?;
+
+	let response = surf::get(format!("{API_ENDPOINT}/guilds/{GUILD_ID}/members/{id}"))
+		.header("Authorization", format!("Bearer {access_token}"))
+		.header("User-Agent", "GeoNext (http://127.0.0.1:8080, 1)")
+		.recv_string()
+		.await
+		.map_err(|e| anyhow!("get_identity {e:?}"))?;
+	let response_json: serde_json::Value = serde_json::from_str(&response).context("Deserialising identity")?;
+	let username = response_json.get("nick").and_then(|f| f.as_str().map(|x| x.to_string())).unwrap_or(username);
+
+	Ok((id, username))
 }
 
 #[cfg(feature = "debugging")]
-fn process_file_watcher_event(result: Result<Event, notify::Error>, absolute_owned_client_path: &PathBuf, hot_reload_sender: &Sender<()>) {
+fn process_file_watcher_event(result: Result<Event, notify::Error>, absolute_owned_client_path: &PathBuf, hot_reload_sender: &watch::Sender<()>) {
 	let event = result.unwrap();
 
 	// Skip non-modify events or events in ignored files like `.lock` `target/` or `/pkg/`
@@ -275,41 +310,26 @@ fn process_file_watcher_event(result: Result<Event, notify::Error>, absolute_own
 		info!("Live refresh of: {}", event.paths.iter().filter_map(|path| path.to_str()).collect::<Vec<_>>().join(", "));
 
 		if compile_client(std::path::Path::new(&absolute_owned_client_path)) {
-			let _ = hot_reload_sender.send_blocking(());
+			let _ = hot_reload_sender.send(());
 		}
 	}
 }
 
 #[cfg(feature = "debugging")]
 /// Initalise file watcher (the watcher needs to be returned because when it is dropped the file watcher stops)
-fn initalise_filewatcher(absolute_owned_client_path: PathBuf) -> notify::Result<(notify::RecommendedWatcher, Receiver<()>)> {
+fn initalise_filewatcher(absolute_owned_client_path: PathBuf) -> notify::Result<(notify::RecommendedWatcher, watch::Receiver<()>)> {
 	// Watch the parent of the client directory
 	let watch = absolute_owned_client_path.parent().unwrap();
 	let absolute_owned_client_path = absolute_owned_client_path.clone();
 
 	// Create channel for sending reload events to clients
-	let (hot_reload_sender, hot_reload_reciever) = bounded(1);
+	let (hot_reload_sender, hot_reload_reciever) = watch::channel(());
 	let event_handler = move |result: Result<Event, notify::Error>| process_file_watcher_event(result, &absolute_owned_client_path, &hot_reload_sender);
 	let mut watcher = RecommendedWatcher::new(event_handler, notify::Config::default())?;
 
 	watcher.watch(watch, RecursiveMode::Recursive)?;
 	info!("Watching directory {:?}", watch);
 	Ok((watcher, hot_reload_reciever))
-}
-
-/// Responds to a request when the client is recompiled
-#[cfg(feature = "debugging")]
-async fn get_reload(req: Request<State>) -> tide::Result {
-	error!("Wait hot");
-	req.state().hot_reload_reciever.recv().await.unwrap();
-
-	let mut res = Response::new(200);
-	res.set_content_type("text/html;charset=utf-8");
-	let body = "Plz reload";
-	error!("Info sending hot reload");
-
-	res.set_body(body);
-	Ok(res)
 }
 
 /// Compiles the client using `wasm-pack`, returning if successful
@@ -349,7 +369,7 @@ fn compile_client(path: &std::path::Path) -> bool {
 		return false;
 	}
 
-	warn!("\nServing on http://127.0.0.1:8080");
+	warn!("\nServing on http://localhost:8000");
 
 	true
 }
