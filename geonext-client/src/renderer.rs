@@ -11,6 +11,7 @@ use program::*;
 use self::text::Text;
 mod atlas;
 pub mod text;
+#[allow(dead_code)]
 pub mod ui_layout;
 
 pub struct Programs {
