@@ -4,20 +4,17 @@
 precision mediump float;
 #endif
 
+in vec3 primaryColour;
+in vec3 secondaryColour;
+in vec2 uv;
+
 out vec4 FragColor;
 
-in vec4 vertexColour;
-
-float near = 0.1; 
-float far  = 100.0; 
-
-float LinearDepth(float depth) {
-	float z = depth * 2.0 - 1.0;
-	return (2.0 * near * far) / (far + near - z * (far - near));
-}
+float p = 0.4;
 
 void main()
 {
-	float depth = LinearDepth(gl_FragCoord.z) / far;
-	FragColor = vertexColour;
+	
+	float triangleWave = (2. * abs(uv.x / p - floor(uv.x / p + 0.5)) - 0.5) * 5.;
+	FragColor = vec4(mix(primaryColour, secondaryColour, triangleWave), 1.-uv.y);
 }

@@ -20,30 +20,30 @@ impl Channel {
 	pub const TOPO: Self = Self(3);
 }
 
-struct HexCoord {
+pub struct HexCoord {
 	q: i32,
 	r: i32,
 }
-struct HexCorners {
-	top: Vec3,
-	top_left: Vec3,
-	top_right: Vec3,
-	bottom_left: Vec3,
-	bottom_right: Vec3,
-	bottom: Vec3,
+pub struct HexCorners {
+	pub top: Vec3,
+	pub top_left: Vec3,
+	pub top_right: Vec3,
+	pub bottom_left: Vec3,
+	pub bottom_right: Vec3,
+	pub bottom: Vec3,
 }
 impl HexCoord {
-	fn from_offset(x: i32, y: i32) -> Self {
+	pub fn from_offset(x: i32, y: i32) -> Self {
 		Self { q: x - (y + (y & 1)) / 2, r: y }
 	}
 
-	fn to_offset(&self) -> (i32, i32) {
+	pub fn to_offset(&self) -> (i32, i32) {
 		let col = self.q + (self.r + (self.r & 1)) / 2;
 		let row = self.r;
 		(col, row)
 	}
 
-	fn centre(&self) -> Vec2 {
+	pub fn centre(&self) -> Vec2 {
 		self.q as f32 * 2. * Map::APOTHEM * Vec2::X + self.r as f32 * Vec2::new(Map::APOTHEM, Map::RADII * 1.5)
 	}
 
@@ -52,7 +52,7 @@ impl HexCoord {
 		Vec2::new(((x * 2 + 1 - (y & 1)) as f32 - 1.) * Map::APOTHEM, y as f32 * (Map::RADII * 3.) / 2.)
 	}
 
-	fn world_space(&self, height: f32) -> HexCorners {
+	pub fn world_space(&self, height: f32) -> HexCorners {
 		let centre = self.centre();
 		HexCorners {
 			top: centre.extend(height) + Vec3::new(0., -Map::RADII, 0.),
@@ -64,7 +64,7 @@ impl HexCoord {
 		}
 	}
 
-	fn intersect_ray(&self, height: f32, ray_origin: Vec3, ray_direction: Vec3) -> Option<Vec3> {
+	pub fn intersect_ray(&self, height: f32, ray_origin: Vec3, ray_direction: Vec3) -> Option<Vec3> {
 		let hex_corners = self.world_space(height);
 		[
 			[hex_corners.top, hex_corners.top_left, hex_corners.top_right],
@@ -155,7 +155,6 @@ impl Map {
 		x ^= x << 13;
 		x ^= x >> 17;
 		x ^= x << 5;
-		info!("{x}");
 		x
 	}
 
@@ -188,7 +187,6 @@ impl Map {
 				let vegitation = lerp(to_float(211, 175, 149), to_float(63, 92, 42), if pos.y < 20 { 0 } else { vegitation });
 				let offset = (Self::xor_rand((pos.x * pos.y) as u32) as f32 / u32::MAX as f32) * 0.8 - 0.3;
 				let up = ((pos.x as f32 / self.width as f32) - 0.5).abs().sqrt() * 0.4;
-				info!("Offset {offset}");
 				let t = ((1. - ((pos.y as f32 / 30. - offset - up).min(1.)).powi(4)) * 255.) as u8;
 				lerp(vegitation, Vec3::ONE, t.saturating_add(((elevation as f32 / 255.).powi(4) * 255.) as u8))
 			};
@@ -244,7 +242,7 @@ impl Map {
 		let ray_direction = (view.inverse() * dir_eye).truncate().normalize();
 		let ray_origin = view.inverse().w_axis.truncate();
 
-		info!("{:?}", HexCoord::from_offset(0, 0).intersect_ray(0., ray_origin, ray_direction));
+		//info!("{:?}", HexCoord::from_offset(0, 0).intersect_ray(0., ray_origin, ray_direction));
 	}
 }
 

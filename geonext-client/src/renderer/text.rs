@@ -145,7 +145,6 @@ impl FontCache {
 					glow::UNSIGNED_BYTE,
 					glow::PixelUnpackData::Slice(&bitmap),
 				);
-				info!("Finished subimage");
 			}
 			GlyphCache { pos, metrics }
 		})

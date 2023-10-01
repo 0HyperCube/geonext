@@ -7,8 +7,9 @@ use crate::{ErrorKind, GameState};
 mod program;
 use program::*;
 
-use self::{terrain_render::TerrainRender, text_render::TextRender};
+use self::{border_render::BorderRender, terrain_render::TerrainRender, text_render::TextRender};
 mod atlas;
+mod border_render;
 mod terrain_render;
 pub mod text;
 mod text_render;
@@ -53,6 +54,7 @@ impl Programs {
 pub struct OpenGl {
 	terrain: Option<TerrainRender>,
 	text: Option<TextRender>,
+	border: Option<BorderRender>,
 	programs: Option<Programs>,
 	//framebuffers: FnvHashMap<ImageId, Result<Framebuffer, ErrorKind>>,
 	context: Rc<glow::Context>,
@@ -66,6 +68,7 @@ impl OpenGl {
 		Self {
 			terrain: None,
 			text: None,
+			border: None,
 			programs: None,
 			context: context.clone(),
 			font: text::FontCache::new(context),
@@ -94,6 +97,7 @@ impl OpenGl {
 		self.programs = Some(Programs::load_shaders(&self.context)?);
 		unsafe { self.terrain = Some(TerrainRender::new(self.context.clone(), verts, indices)?) };
 		unsafe { self.text = Some(TextRender::new(self.context.clone())?) };
+		unsafe { self.border = Some(BorderRender::new(self.context.clone())?) };
 
 		Ok(())
 	}
@@ -102,7 +106,7 @@ impl OpenGl {
 	pub fn rerender(&mut self, game_state: &GameState) {
 		let Some(Programs {
 			scene_program,
-			border_program: _,
+			border_program,
 			_ui_program: _,
 			text_program,
 		}) = &self.programs
@@ -112,8 +116,11 @@ impl OpenGl {
 		if let Some(terrain) = &self.terrain {
 			unsafe { terrain.render(&scene_program, game_state) };
 		}
-		if let Some(terrain) = &self.text {
-			unsafe { terrain.render(&text_program, game_state, &mut self.font) };
+		if let Some(text) = &self.text {
+			unsafe { text.render(&text_program, game_state, &mut self.font) };
+		}
+		if let Some(border) = &self.border {
+			unsafe { border.render(&border_program, game_state) };
 		}
 	}
 
