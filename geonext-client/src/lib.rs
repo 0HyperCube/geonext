@@ -101,10 +101,8 @@ impl GameState {
 	}
 
 	fn hover(&mut self, event: &EventType) -> bool {
-		if let EventType::PointerMove(pos) = event {
-			let mat = self.projection_mat() * self.view_mat();
-			self.map.update_hover(mat, pos.as_vec2() / self.viewport.as_vec2());
-
+		if let EventType::PointerMove(_delta) = event {
+			self.map.update_hover(self.projection_mat(), self.view_mat(), self.input.mouse_pos.as_vec2() / self.viewport.as_vec2());
 			true
 		} else {
 			false

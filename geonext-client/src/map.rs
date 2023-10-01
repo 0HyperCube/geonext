@@ -20,6 +20,71 @@ impl Channel {
 	pub const TOPO: Self = Self(3);
 }
 
+struct HexCoord {
+	q: i32,
+	r: i32,
+}
+struct HexCorners {
+	top: Vec3,
+	top_left: Vec3,
+	top_right: Vec3,
+	bottom_left: Vec3,
+	bottom_right: Vec3,
+	bottom: Vec3,
+}
+impl HexCoord {
+	fn from_offset(x: i32, y: i32) -> Self {
+		Self { q: x - (y + (y & 1)) / 2, r: y }
+	}
+
+	fn to_offset(&self) -> (i32, i32) {
+		let col = self.q + (self.r + (self.r & 1)) / 2;
+		let row = self.r;
+		(col, row)
+	}
+
+	fn centre(&self) -> Vec2 {
+		self.q as f32 * 2. * Map::APOTHEM * Vec2::X + self.r as f32 * Vec2::new(Map::APOTHEM, Map::RADII * 1.5)
+	}
+
+	fn centre_with_offset(&self) -> Vec2 {
+		let (x, y) = self.to_offset();
+		Vec2::new(((x * 2 + 1 - (y & 1)) as f32 - 1.) * Map::APOTHEM, y as f32 * (Map::RADII * 3.) / 2.)
+	}
+
+	fn world_space(&self, height: f32) -> HexCorners {
+		let centre = self.centre();
+		HexCorners {
+			top: centre.extend(height) + Vec3::new(0., -Map::RADII, 0.),
+			top_left: centre.extend(height) + Vec3::new(-Map::APOTHEM, -Map::RADII / 2., 0.),
+			top_right: centre.extend(height) + Vec3::new(Map::APOTHEM, -Map::RADII / 2., 0.),
+			bottom_left: centre.extend(height) + Vec3::new(-Map::APOTHEM, Map::RADII / 2., 0.),
+			bottom_right: centre.extend(height) + Vec3::new(Map::APOTHEM, Map::RADII / 2., 0.),
+			bottom: centre.extend(height) + Vec3::new(0., Map::RADII, 0.),
+		}
+	}
+
+	fn intersect_ray(&self, height: f32, ray_origin: Vec3, ray_direction: Vec3) -> Option<Vec3> {
+		let hex_corners = self.world_space(height);
+		[
+			[hex_corners.top, hex_corners.top_left, hex_corners.top_right],
+			[hex_corners.top_right, hex_corners.top_left, hex_corners.bottom_right],
+			[hex_corners.bottom_right, hex_corners.top_left, hex_corners.bottom_left],
+			[hex_corners.bottom_left, hex_corners.bottom, hex_corners.bottom_right],
+		]
+		.into_iter()
+		.filter_map(|verts| ray_triangle(ray_origin, ray_direction, verts))
+		.next()
+	}
+}
+#[test]
+fn hex_coords() {
+	let (offset_x, offset_y) = (0, -1);
+	let hex = HexCoord::from_offset(offset_x, offset_y);
+	assert_eq!(hex.to_offset(), (offset_x, offset_y));
+	assert_eq!(hex.centre_with_offset(), hex.centre());
+}
+
 impl Map {
 	const RADII: f32 = 1.;
 	const APOTHEM: f32 = 0.8660254037844386;
@@ -110,7 +175,7 @@ impl Map {
 		let topo = Channel::TOPO;
 
 		for pos in (0..self.height).flat_map(|y| (0..self.width).map(move |x| UVec2::new(x as u32, y as u32))) {
-			let centre = Vec2::new(((pos.x * 2 + 1 - (pos.y % 2)) as f32 - 1.) * Map::APOTHEM, pos.y as f32 * (Map::RADII * 3.) / 2.);
+			let hex = HexCoord::from_offset(pos.x as i32, pos.y as i32);
 			let _snow = self.sample_at(Channel::SNOW, pos);
 			let vegitation = self.sample_at(Channel::VEG, pos);
 			let elevation = self.sample_at(topo, pos);
@@ -129,20 +194,14 @@ impl Map {
 			};
 			//let colour = [0., 0., 0.];
 			let height = (if elevation > 240 { -0.01 } else { elevation as f32 / 255. }) * 5.;
-			let top_pos = (centre + Vec2::new(0., -Map::RADII)).extend(height);
 
-			let top_left_pos = (centre + Vec2::new(-Map::APOTHEM, -Map::RADII / 2.)).extend(height);
-			let top_right_pos = (centre + Vec2::new(Map::APOTHEM, -Map::RADII / 2.)).extend(height);
-			let bottom_left_pos = (centre + Vec2::new(-Map::APOTHEM, Map::RADII / 2.)).extend(height);
-			let bottom_right_pos = (centre + Vec2::new(Map::APOTHEM, Map::RADII / 2.)).extend(height);
-			let bottom_pos = (centre + Vec2::new(0., Map::RADII)).extend(height);
-
-			push_vert(colour, &mut verticies, top_pos);
-			push_vert(colour, &mut verticies, top_left_pos);
-			push_vert(colour, &mut verticies, top_right_pos);
-			push_vert(colour, &mut verticies, bottom_left_pos);
-			push_vert(colour, &mut verticies, bottom_right_pos);
-			push_vert(colour, &mut verticies, bottom_pos);
+			let hex_corners = hex.world_space(height);
+			push_vert(colour, &mut verticies, hex_corners.top);
+			push_vert(colour, &mut verticies, hex_corners.top_left);
+			push_vert(colour, &mut verticies, hex_corners.top_right);
+			push_vert(colour, &mut verticies, hex_corners.bottom_left);
+			push_vert(colour, &mut verticies, hex_corners.bottom_right);
+			push_vert(colour, &mut verticies, hex_corners.bottom);
 
 			let offset = ((pos.y * self.width) + pos.x) * 6;
 			let [top, top_left, top_right, bottom_left, bottom_right, bottom] = [offset + 0, offset + 1, offset + 2, offset + 3, offset + 4, offset + 5];
@@ -176,21 +235,16 @@ impl Map {
 		(verticies, tris)
 	}
 
-	pub fn update_hover(&self, mat: Mat4, normalised_mouse: Vec2) {
-		let a = mat.inverse().project_point3(normalised_mouse.extend(1.));
-		let b = mat.inverse().transform_vector3(Vec3::Z);
-		info!(
-			"{:?}",
-			ray_triangle(
-				a,
-				b,
-				[
-					Vec2::new(-Map::APOTHEM, -Map::RADII / 2.).extend(0.),
-					Vec2::new(Map::APOTHEM, -Map::RADII / 2.).extend(0.),
-					Vec2::new(-Map::APOTHEM, Map::RADII / 2.).extend(0.)
-				]
-			)
-		);
+	pub fn update_hover(&self, projection: Mat4, view: Mat4, normalised_mouse: Vec2) {
+		let px_nds = (normalised_mouse - 0.5) * Vec2::new(2., -2.);
+		//let px_nds = Vec2::ZERO;
+		let point_nds = px_nds.extend(-1.);
+		let mut dir_eye = projection.inverse() * point_nds.extend(1.);
+		dir_eye.w = 0.;
+		let ray_direction = (view.inverse() * dir_eye).truncate().normalize();
+		let ray_origin = view.inverse().w_axis.truncate();
+
+		info!("{:?}", HexCoord::from_offset(0, 0).intersect_ray(0., ray_origin, ray_direction));
 	}
 }
 

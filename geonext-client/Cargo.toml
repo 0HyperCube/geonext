@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 glow = "0.12"
 log = "0.4"
-glam = "0.24"
+glam = { version = "0.24", features = ["glam-assert"] }
 #hecs = "0.9"
 random-fast-rng = { version = "0.1.1", default-features = false }
 image = { version = "0.24.0", default-features = false, features = ["jpeg"] }
