@@ -32,7 +32,7 @@ impl Camera {
 	/// Construct a mat4 based on the camera's position and zoom
 	pub fn to_matrix(&self, terrain: &Terrain) -> Mat4 {
 		let height = terrain.sample_at(self.position + OFFSET);
-		let eye = self.position.extend(height + CAMERA_CLEARENCE + self.zoom * 100.);
+		let eye = self.position.extend(CAMERA_CLEARENCE + self.zoom * 100.);
 		let centre = (self.position + OFFSET).extend(height);
 		Mat4::from_scale(Vec3::new(-1., 1., 1.)) * Mat4::from_rotation_z(core::f32::consts::PI) * Mat4::look_at_rh(eye, centre, Vec3::new(0., 1., 0.))
 	}
