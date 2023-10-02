@@ -20,7 +20,7 @@ thread_local! {
 	pub static HAS_CRASHED: RefCell<bool> = RefCell::new(false);
 }
 
-#[wasm_bindgen(module = "/utils.js")]
+#[wasm_bindgen(module = "/public/utils.js")]
 extern "C" {
 	/// Loads assets in js (so we don't need an async runtime in rust)
 	fn load_asset(asset: Map);

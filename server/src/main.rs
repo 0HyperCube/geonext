@@ -81,7 +81,9 @@ async fn main() -> Result<(), anyhow::Error> {
 		};
 		get_index(state)
 	});
-	let assets = warp::path("assets").and(warp::fs::dir(assets));
+	let pkg = warp::path("assets").and(warp::path("pkg")).and(warp::fs::dir(assets.join("pkg")));
+	let public = warp::path("assets").and(warp::fs::dir(assets.join("public")));
+
 	let ws = warp::path("__stream").and(warp::ws()).map(move |ws: warp::ws::Ws| {
 		let state = State {
 			absolute_owned_client_path: absolute_owned_client_path.clone(),
@@ -109,7 +111,7 @@ async fn main() -> Result<(), anyhow::Error> {
 			}
 		})
 	});
-	let routes = index.or(ws).or(assets).or(warp::fs::dir(serve_path));
+	let routes = index.or(ws).or(public).or(pkg).or(warp::fs::dir(serve_path));
 
 	#[cfg(feature = "debugging")]
 	let final_routes = routes
