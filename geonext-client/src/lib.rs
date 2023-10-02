@@ -129,7 +129,7 @@ impl Application {
 		game_state.map.load(assets.take("map"));
 		game_state.terrain.load(&assets.get("heightmap"));
 		let (vertices, indices) = game_state.map.generate_terrain();
-		renderer.init(&vertices, &indices)?;
+		renderer.init(&vertices, &indices, &game_state)?;
 		renderer.font.add_font(&assets, "regular");
 
 		let mut input_layers = Default::default();

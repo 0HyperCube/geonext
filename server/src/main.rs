@@ -369,7 +369,7 @@ fn compile_client(path: &std::path::Path) -> bool {
 		return false;
 	}
 
-	warn!("\nServing on http://localhost:8000");
+	warn!("\nServing on http://localhost:8080");
 
 	true
 }

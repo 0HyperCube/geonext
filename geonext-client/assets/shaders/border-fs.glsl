@@ -17,4 +17,5 @@ void main()
 	
 	float triangleWave = (2. * abs(uv.x / p - floor(uv.x / p + 0.5)) - 0.5) * 5.;
 	FragColor = vec4(mix(primaryColour, secondaryColour, triangleWave), 1.-uv.y);
+	FragColor = vec4(primaryColour, 1.0);
 }

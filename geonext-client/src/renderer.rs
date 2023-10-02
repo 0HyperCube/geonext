@@ -91,13 +91,13 @@ impl OpenGl {
 	}
 
 	/// Initalise opengl
-	pub fn init(&mut self, verts: &[f32], indices: &[u32]) -> Result<(), ErrorKind> {
+	pub fn init(&mut self, verts: &[f32], indices: &[u32], game_state: &GameState) -> Result<(), ErrorKind> {
 		self.setup_opengl();
 		self.font.init()?;
 		self.programs = Some(Programs::load_shaders(&self.context)?);
 		unsafe { self.terrain = Some(TerrainRender::new(self.context.clone(), verts, indices)?) };
 		unsafe { self.text = Some(TextRender::new(self.context.clone())?) };
-		unsafe { self.border = Some(BorderRender::new(self.context.clone())?) };
+		unsafe { self.border = Some(BorderRender::new(self.context.clone(), &game_state.map)?) };
 
 		Ok(())
 	}

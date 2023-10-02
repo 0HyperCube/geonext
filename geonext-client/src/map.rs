@@ -1,12 +1,12 @@
 use std::ops::Range;
 
-use glam::{Mat4, UVec2, Vec2, Vec3};
+use glam::{IVec2, Mat4, UVec2, Vec2, Vec3};
 
 #[derive(Debug, Default)]
 pub struct Map {
 	map: Vec<u8>,
-	width: u32,
-	height: u32,
+	pub width: u32,
+	pub height: u32,
 	channels: u32,
 	name_index: Vec<Range<usize>>,
 	data_start: usize,
@@ -15,11 +15,13 @@ pub struct Map {
 #[derive(Clone, Copy)]
 pub struct Channel(u32);
 impl Channel {
+	pub const NAME: Self = Self(0);
 	pub const SNOW: Self = Self(1);
 	pub const VEG: Self = Self(2);
 	pub const TOPO: Self = Self(3);
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct HexCoord {
 	q: i32,
 	r: i32,
@@ -33,14 +35,23 @@ pub struct HexCorners {
 	pub bottom: Vec3,
 }
 impl HexCoord {
+	pub const TOP_LEFT: Self = Self::new(0, -1);
+	pub const TOP_RIGHT: Self = Self::new(1, -1);
+	pub const RIGHT: Self = Self::new(1, 0);
+	pub const BOTTOM_RIGHT: Self = Self::new(0, 1);
+	pub const BOTTOM_LEFT: Self = Self::new(-1, 1);
+	pub const LEFT: Self = Self::new(-1, 0);
+	pub const fn new(q: i32, r: i32) -> Self {
+		Self { q, r }
+	}
 	pub fn from_offset(x: i32, y: i32) -> Self {
 		Self { q: x - (y + (y & 1)) / 2, r: y }
 	}
 
-	pub fn to_offset(&self) -> (i32, i32) {
+	pub fn to_offset(&self) -> IVec2 {
 		let col = self.q + (self.r + (self.r & 1)) / 2;
 		let row = self.r;
-		(col, row)
+		IVec2::new(col, row)
 	}
 
 	pub fn centre(&self) -> Vec2 {
@@ -48,19 +59,32 @@ impl HexCoord {
 	}
 
 	fn centre_with_offset(&self) -> Vec2 {
-		let (x, y) = self.to_offset();
-		Vec2::new(((x * 2 + 1 - (y & 1)) as f32 - 1.) * Map::APOTHEM, y as f32 * (Map::RADII * 3.) / 2.)
+		let offset = self.to_offset();
+		Vec2::new(((offset.x * 2 + 1 - (offset.y & 1)) as f32 - 1.) * Map::APOTHEM, offset.y as f32 * (Map::RADII * 3.) / 2.)
 	}
 
 	pub fn world_space(&self, height: f32) -> HexCorners {
 		let centre = self.centre();
 		HexCorners {
-			top: centre.extend(height) + Vec3::new(0., -Map::RADII, 0.),
 			top_left: centre.extend(height) + Vec3::new(-Map::APOTHEM, -Map::RADII / 2., 0.),
+			top: centre.extend(height) + Vec3::new(0., -Map::RADII, 0.),
 			top_right: centre.extend(height) + Vec3::new(Map::APOTHEM, -Map::RADII / 2., 0.),
-			bottom_left: centre.extend(height) + Vec3::new(-Map::APOTHEM, Map::RADII / 2., 0.),
 			bottom_right: centre.extend(height) + Vec3::new(Map::APOTHEM, Map::RADII / 2., 0.),
 			bottom: centre.extend(height) + Vec3::new(0., Map::RADII, 0.),
+			bottom_left: centre.extend(height) + Vec3::new(-Map::APOTHEM, Map::RADII / 2., 0.),
+		}
+	}
+
+	pub fn corner(&self, direction: Self, height: f32) -> Vec3 {
+		let centre = self.centre();
+		match direction {
+			Self::TOP_LEFT => centre.extend(height) + Vec3::new(-Map::APOTHEM, -Map::RADII / 2., 0.),
+			Self::TOP_RIGHT => centre.extend(height) + Vec3::new(0., -Map::RADII, 0.),
+			Self::RIGHT => centre.extend(height) + Vec3::new(Map::APOTHEM, -Map::RADII / 2., 0.),
+			Self::BOTTOM_RIGHT => centre.extend(height) + Vec3::new(Map::APOTHEM, Map::RADII / 2., 0.),
+			Self::BOTTOM_LEFT => centre.extend(height) + Vec3::new(0., Map::RADII, 0.),
+			Self::LEFT => centre.extend(height) + Vec3::new(-Map::APOTHEM, Map::RADII / 2., 0.),
+			_ => unimplemented!("{direction:?} is not a unit direction"),
 		}
 	}
 
@@ -73,16 +97,50 @@ impl HexCoord {
 			[hex_corners.bottom_left, hex_corners.bottom, hex_corners.bottom_right],
 		]
 		.into_iter()
-		.filter_map(|verts| ray_triangle(ray_origin, ray_direction, verts))
-		.next()
+		.find_map(|verts| ray_triangle(ray_origin, ray_direction, verts))
+	}
+
+	pub fn to_cubic(&self) -> (i32, i32, i32) {
+		(self.q, self.r, 0 - self.q - self.r)
+	}
+
+	pub fn rotate_clockwise(&self) -> Self {
+		Self::new(-self.r, self.q + self.r)
+	}
+	pub fn rotate_anticlockwise(&self) -> Self {
+		Self::new(self.q + self.r, -self.q)
+	}
+}
+
+impl core::ops::Add for HexCoord {
+	type Output = Self;
+	fn add(self, rhs: Self) -> Self::Output {
+		Self { q: self.q + rhs.q, r: self.r + rhs.r }
 	}
 }
 #[test]
 fn hex_coords() {
 	let (offset_x, offset_y) = (0, -1);
 	let hex = HexCoord::from_offset(offset_x, offset_y);
-	assert_eq!(hex.to_offset(), (offset_x, offset_y));
+	assert_eq!(hex.to_offset(), UVec2::new(offset_x, offset_y));
 	assert_eq!(hex.centre_with_offset(), hex.centre());
+}
+
+#[test]
+fn rotate() {
+	assert_eq!(HexCoord::TOP_LEFT.rotate_clockwise(), HexCoord::TOP_RIGHT);
+	assert_eq!(HexCoord::TOP_RIGHT.rotate_clockwise(), HexCoord::RIGHT);
+	assert_eq!(HexCoord::RIGHT.rotate_clockwise(), HexCoord::BOTTOM_RIGHT);
+	assert_eq!(HexCoord::BOTTOM_RIGHT.rotate_clockwise(), HexCoord::BOTTOM_LEFT);
+	assert_eq!(HexCoord::BOTTOM_LEFT.rotate_clockwise(), HexCoord::LEFT);
+	assert_eq!(HexCoord::LEFT.rotate_clockwise(), HexCoord::TOP_LEFT);
+
+	assert_eq!(HexCoord::TOP_LEFT.rotate_anticlockwise(), HexCoord::LEFT);
+	assert_eq!(HexCoord::TOP_RIGHT.rotate_anticlockwise(), HexCoord::TOP_LEFT);
+	assert_eq!(HexCoord::RIGHT.rotate_anticlockwise(), HexCoord::TOP_RIGHT);
+	assert_eq!(HexCoord::BOTTOM_RIGHT.rotate_anticlockwise(), HexCoord::RIGHT);
+	assert_eq!(HexCoord::BOTTOM_LEFT.rotate_anticlockwise(), HexCoord::BOTTOM_RIGHT);
+	assert_eq!(HexCoord::LEFT.rotate_anticlockwise(), HexCoord::BOTTOM_LEFT);
 }
 
 impl Map {
@@ -158,6 +216,10 @@ impl Map {
 		x
 	}
 
+	pub fn elevation_to_z(elevation: u8) -> f32 {
+		(if elevation > 240 { -0.01 } else { elevation as f32 / 255. }) * 5.
+	}
+
 	pub fn generate_terrain(&self) -> (Vec<f32>, Vec<u32>) {
 		assert!(!self.map.is_empty(), "Map should be populated");
 
@@ -191,7 +253,7 @@ impl Map {
 				lerp(vegitation, Vec3::ONE, t.saturating_add(((elevation as f32 / 255.).powi(4) * 255.) as u8))
 			};
 			//let colour = [0., 0., 0.];
-			let height = (if elevation > 240 { -0.01 } else { elevation as f32 / 255. }) * 5.;
+			let height = Self::elevation_to_z(elevation);
 
 			let hex_corners = hex.world_space(height);
 			push_vert(colour, &mut verticies, hex_corners.top);
@@ -243,6 +305,10 @@ impl Map {
 		let ray_origin = view.inverse().w_axis.truncate();
 
 		//info!("{:?}", HexCoord::from_offset(0, 0).intersect_ray(0., ray_origin, ray_direction));
+	}
+
+	pub fn in_bounds(&self, pos: IVec2) -> bool {
+		pos.x >= 0 && pos.x <= self.width as i32 && pos.y >= 0 && pos.y <= self.height as i32
 	}
 }
 
