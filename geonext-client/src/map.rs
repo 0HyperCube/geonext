@@ -75,15 +75,15 @@ impl HexCoord {
 		}
 	}
 
-	pub fn corner(&self, direction: Self, height: f32) -> Vec3 {
+	pub fn corner(&self, direction: Self) -> Vec2 {
 		let centre = self.centre();
 		match direction {
-			Self::TOP_LEFT => centre.extend(height) + Vec3::new(-Map::APOTHEM, -Map::RADII / 2., 0.),
-			Self::TOP_RIGHT => centre.extend(height) + Vec3::new(0., -Map::RADII, 0.),
-			Self::RIGHT => centre.extend(height) + Vec3::new(Map::APOTHEM, -Map::RADII / 2., 0.),
-			Self::BOTTOM_RIGHT => centre.extend(height) + Vec3::new(Map::APOTHEM, Map::RADII / 2., 0.),
-			Self::BOTTOM_LEFT => centre.extend(height) + Vec3::new(0., Map::RADII, 0.),
-			Self::LEFT => centre.extend(height) + Vec3::new(-Map::APOTHEM, Map::RADII / 2., 0.),
+			Self::TOP_LEFT => centre + Vec2::new(-Map::APOTHEM, -Map::RADII / 2.),
+			Self::TOP_RIGHT => centre + Vec2::new(0., -Map::RADII),
+			Self::RIGHT => centre + Vec2::new(Map::APOTHEM, -Map::RADII / 2.),
+			Self::BOTTOM_RIGHT => centre + Vec2::new(Map::APOTHEM, Map::RADII / 2.),
+			Self::BOTTOM_LEFT => centre + Vec2::new(0., Map::RADII),
+			Self::LEFT => centre + Vec2::new(-Map::APOTHEM, Map::RADII / 2.),
 			_ => unimplemented!("{direction:?} is not a unit direction"),
 		}
 	}
@@ -308,7 +308,7 @@ impl Map {
 	}
 
 	pub fn in_bounds(&self, pos: IVec2) -> bool {
-		pos.x >= 0 && pos.x <= self.width as i32 && pos.y >= 0 && pos.y <= self.height as i32
+		pos.x >= 0 && pos.x <= self.width as i32 && pos.y >= 0 && pos.y < self.height as i32
 	}
 }
 

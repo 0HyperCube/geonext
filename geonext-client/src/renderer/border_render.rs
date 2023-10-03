@@ -22,7 +22,6 @@ impl BorderRender {
 		let secondary = Vec3::new(0., 0., 1.);
 		let mut verts = Vec::new();
 		let mut index = 0;
-		let z_fight = Vec3::new(0., 0., 0.01);
 
 		let mut visited = HashSet::new();
 		for y in 0..map.height {
@@ -42,11 +41,13 @@ impl BorderRender {
 				let mut current_hex = start_hex;
 				let mut current_height = Map::elevation_to_z(map.sample_at(Channel::TOPO, current_hex.to_offset().as_uvec2()));
 
-				info!("New hex");
 				let mut started = false;
+				let start_index = index;
 				while !(direction == HexCoord::TOP_LEFT && current_hex == start_hex) || !started {
-					let start_corner = current_hex.corner(direction, current_height);
-					//info!("dir {direction:?} current {current_hex:?}");
+					let start_corner = current_hex.corner(direction.rotate_anticlockwise());
+					let middle_corner = current_hex.corner(direction);
+					let middle_height = current_height;
+
 					let proposed_offset = (current_hex + direction).to_offset();
 					if map.in_bounds(proposed_offset) && name_index == map.sample_at(Channel::NAME, proposed_offset.as_uvec2()) {
 						current_hex = current_hex + direction;
@@ -55,27 +56,29 @@ impl BorderRender {
 					} else {
 						direction = direction.rotate_clockwise();
 					}
-					let end_corner = current_hex.corner(direction, current_height);
-					let real_direction = (end_corner.truncate() - start_corner.truncate()).normalize();
-					let perp_direction = Vec2::new(real_direction.y, -real_direction.x) * 0.2;
-					verts.push((start_corner + z_fight, primary, secondary, Vec2::new(0., 0.)));
-					verts.push((start_corner + perp_direction.extend(0.) + z_fight, primary, secondary, Vec2::new(1., 1.)));
+
+					let end_corner = current_hex.corner(direction);
+					let real_direction = ((end_corner - middle_corner).normalize() + (middle_corner - start_corner).normalize()) / 2.;
+					let perpendicular_direction = Vec2::new(-real_direction.y, real_direction.x) * 0.2;
+
+					verts.push((middle_corner.extend(middle_height), primary, secondary, Vec2::new(0., 0.)));
+					verts.push((middle_corner.extend(middle_height) + perpendicular_direction.extend(0.), primary, secondary, Vec2::new(1., 1.)));
+					verts.push((middle_corner.extend(current_height), primary, secondary, Vec2::new(0., 0.)));
+					verts.push((middle_corner.extend(current_height) + perpendicular_direction.extend(0.), primary, secondary, Vec2::new(1., 1.)));
+
 					if started {
 						indices.extend([index - 2, index - 1, index, index, index - 1, index + 1]);
+						indices.extend([index, index + 1, index + 2, index + 2, index + 1, index + 3]);
 					}
 					index += 4;
-					verts.push((start_corner.truncate().extend(current_height) + z_fight, primary, secondary, Vec2::new(0., 0.)));
-					verts.push((
-						start_corner.truncate().extend(current_height) + perp_direction.extend(0.) + z_fight,
-						primary,
-						secondary,
-						Vec2::new(1., 1.),
-					));
 
 					if direction == HexCoord::TOP_LEFT {
 						visited.insert(current_hex);
 					}
 					started = true;
+				}
+				if index != start_index {
+					indices.extend([start_index, start_index + 1, index - 2, index - 2, start_index + 1, index - 1]);
 				}
 			}
 		}

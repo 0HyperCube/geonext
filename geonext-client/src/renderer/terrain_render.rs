@@ -53,9 +53,6 @@ impl TerrainRender {
 	}
 
 	pub unsafe fn render(&self, scene_program: &Program, game_state: &GameState) {
-		self.context.clear_color(0.207843137, 0.207843137, 0.207843137, 1.);
-		self.context.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-
 		scene_program.bind();
 		scene_program.set_vec4("addColour", Vec4::ZERO);
 

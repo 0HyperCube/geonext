@@ -113,6 +113,10 @@ impl OpenGl {
 		else {
 			return;
 		};
+		unsafe {
+			self.context.clear_color(0.207843137, 0.207843137, 0.207843137, 1.);
+			self.context.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+		}
 		if let Some(terrain) = &self.terrain {
 			unsafe { terrain.render(&scene_program, game_state) };
 		}
