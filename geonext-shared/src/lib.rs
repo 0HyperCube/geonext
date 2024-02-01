@@ -1,14 +1,10 @@
-use serde::{Deserialize, Serialize};
+#[macro_use]
+extern crate log;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(tag = "type")]
-pub enum ServerMessage {
-	AuthAccepted { username: String },
-	Error { message: String },
-}
+mod client_message;
+pub mod map_loader;
+mod server_message;
+pub mod territories;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(tag = "type")]
-pub enum ClientMessage {
-	Auth { code: String },
-}
+pub use client_message::ClientMessage;
+pub use server_message::ServerMessage;

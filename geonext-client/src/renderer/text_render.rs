@@ -1,7 +1,6 @@
-use super::{
-	program::Program,
-	text::{FontCache, Text},
-};
+use super::program::Program;
+use super::text::{FontCache, TextLayoutCache};
+use super::ui_layout::*;
 use crate::{ErrorKind, GameState};
 use glam::Mat4;
 use glow::{Context, HasContext};
@@ -71,13 +70,43 @@ impl TextRender {
 		self.context.active_texture(glow::TEXTURE0);
 		self.context.bind_vertex_array(Some(self.vertex_array));
 
-		let pos = glam::Vec2::new(game_state.viewport.x as f32 - 200., 20.);
-		let framerate = Text::new(font, &format!("Peek: {}ms", game_state.time.peak_frametime().round()), "regular");
-		framerate.render_glyphs(font, pos, 0.3, self.instance_buffer);
+		// let pos = glam::Vec2::new(game_state.viewport.x as f32 - 200., 20.);
+		// let framerate = Text::new(font, &format!("Peek: {}ms", game_state.time.peak_frametime().round()), "regular");
+		// framerate.render_glyphs(font, pos, 0.3, self.instance_buffer);
 
-		let pos = glam::Vec2::new(game_state.viewport.x as f32 - 200., 20.);
-		let framerate = Text::new(font, "GeoNext Alpha", "regular");
-		framerate.render_glyphs(font, pos, 0.3, self.instance_buffer);
+		let debug_info = Container {
+			child: Flex {
+				children: (
+					TextNode::new(font, &"GeoNext Alpha", "regular", 1.),
+					TextNode::new(font, &format!("Peek: {}ms", game_state.time.peak_frametime().round()), "regular", 1.),
+				),
+				main_axis_alignment: MainAxisAlignment::SpaceBetween,
+				..default()
+			},
+			margin: 10.,
+			..default()
+		};
+		let tooltip = Tooltip {
+			child: Container {
+				child: TextNode::new(font, game_state.map.hovered_name(), "regular", 1.),
+				margin: 10.,
+				..default()
+			},
+			mouse: game_state.input.mouse_pos.as_dvec2(),
+			..default()
+		};
+		let mut frame_time = Stack {
+			children: (debug_info, tooltip),
+			..default()
+		};
+		frame_time.layout(BoxConstraint::loose(game_state.viewport.as_dvec2()));
+		frame_time.render(
+			glam::DVec2::ZERO,
+			&mut UiRenderer {
+				cache: font,
+				instances: self.instance_buffer,
+			},
+		);
 
 		self.context.bind_vertex_array(None);
 		self.context.bind_texture(glow::TEXTURE_2D, None);

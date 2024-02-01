@@ -113,6 +113,12 @@ impl OpenGl {
 		else {
 			return;
 		};
+		if game_state.map.updated {
+			match unsafe { BorderRender::new(self.context.clone(), &game_state.map) } {
+				Ok(borders) => self.border = Some(borders),
+				Err(e) => error!("Error generating borders {e}"),
+			}
+		}
 		unsafe {
 			self.context.clear_color(0.207843137, 0.207843137, 0.207843137, 1.);
 			self.context.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);

@@ -1,8 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
-use glam::DVec2;
+use glam::{DVec2, Vec2};
 
-fn default<T: Default>() -> T {
+pub fn default<T: Default>() -> T {
 	T::default()
 }
 
@@ -101,9 +101,19 @@ pub struct RenderParams {
 	pub size: Size,
 }
 
+pub struct UiRenderer<'a> {
+	pub cache: &'a mut super::text::FontCache,
+	pub instances: <glow::Context as glow::HasContext>::Buffer,
+}
+
 pub trait UiElement {
 	fn layout(&mut self, box_constraint: BoxConstraint) -> Size;
 	fn render_params(&mut self) -> &mut RenderParams;
+	fn render(&mut self, position: DVec2, renderer: &mut UiRenderer) {
+		let position = position + self.render_params().offset;
+		self.render_self(position, renderer)
+	}
+	fn render_self(&mut self, position: DVec2, renderer: &mut UiRenderer);
 }
 
 pub struct Expanded<E: UiElement> {
@@ -120,21 +130,85 @@ impl<E: UiElement> UiElement for Expanded<E> {
 		self.render_params.fit = FlexFit::Tight;
 		&mut self.render_params
 	}
+	fn render_self(&mut self, position: DVec2, renderer: &mut UiRenderer) {
+		self.child.render(position, renderer);
+	}
 }
 
 #[derive(Default)]
 pub struct Container<E: UiElement> {
-	child: E,
-	render_params: RenderParams,
+	pub child: E,
+	pub margin: f64,
+	pub render_params: RenderParams,
 }
 
 impl<E: UiElement> UiElement for Container<E> {
-	fn layout(&mut self, box_constraint: BoxConstraint) -> Size {
-		self.child.layout(box_constraint)
+	fn layout(&mut self, mut box_constraint: BoxConstraint) -> Size {
+		box_constraint.max = DVec2::ZERO.max(box_constraint.max - DVec2::splat(self.margin) * 2.);
+		box_constraint.min = DVec2::ZERO.max(box_constraint.min - DVec2::splat(self.margin) * 2.);
+		Size(self.child.layout(box_constraint).0 + DVec2::splat(self.margin) * 2.)
 	}
 
 	fn render_params(&mut self) -> &mut RenderParams {
 		&mut self.render_params
+	}
+
+	fn render_self(&mut self, position: DVec2, renderer: &mut UiRenderer) {
+		self.child.render(position + self.margin, renderer);
+	}
+}
+
+#[derive(Default)]
+pub struct Tooltip<E: UiElementList> {
+	pub child: E,
+	pub mouse: DVec2,
+	pub inner_size: DVec2,
+	pub parent_size: DVec2,
+	pub render_params: RenderParams,
+}
+
+impl<E: UiElementList> UiElement for Tooltip<E> {
+	fn layout(&mut self, box_constraint: BoxConstraint) -> Size {
+		self.inner_size = (0..self.child.len())
+			.map(|index| self.child.layout_nth(index, box_constraint))
+			.map(|s| s.0)
+			.fold(DVec2::ZERO, |a, b| a.max(b));
+		self.parent_size = box_constraint.max;
+		Size(self.parent_size)
+	}
+
+	fn render_params(&mut self) -> &mut RenderParams {
+		&mut self.render_params
+	}
+
+	fn render_self(&mut self, position: DVec2, renderer: &mut UiRenderer) {
+		self.child
+			.render_all(position + (self.mouse.max(DVec2::ZERO) + self.inner_size).min(self.parent_size) - self.inner_size, renderer);
+	}
+}
+
+#[derive(Default)]
+pub struct Stack<E: UiElementList> {
+	pub children: E,
+	pub render_params: RenderParams,
+}
+
+impl<E: UiElementList> UiElement for Stack<E> {
+	fn layout(&mut self, box_contraint: BoxConstraint) -> Size {
+		let mut size = DVec2::ZERO;
+		for child_index in 0..self.children.len() {
+			let child_size = self.children.layout_nth(child_index, box_contraint);
+			size = size.max(child_size.0);
+		}
+		Size(size)
+	}
+
+	fn render_params(&mut self) -> &mut RenderParams {
+		&mut self.render_params
+	}
+
+	fn render_self(&mut self, position: DVec2, renderer: &mut UiRenderer) {
+		self.children.render_all(position, renderer);
 	}
 }
 
@@ -142,9 +216,11 @@ pub trait UiElementList {
 	fn len(&self) -> usize;
 	fn render_params(&mut self, index: usize) -> &mut RenderParams;
 	fn layout_nth(&mut self, index: usize, box_contraint: BoxConstraint) -> Size;
+	fn render_all(&mut self, position: DVec2, renderer: &mut UiRenderer);
 }
 
-struct ComputedSize(DVec2);
+#[derive(Default)]
+pub(crate) struct ComputedSize(DVec2);
 
 pub struct Flex<E: UiElementList> {
 	pub children: E,
@@ -152,19 +228,20 @@ pub struct Flex<E: UiElementList> {
 	pub main_axis_alignment: MainAxisAlignment,
 	pub main_axis_size: MainAxisSize,
 	pub cross_axis_alignment: CrossAxisAlignment,
-	computed_size: ComputedSize,
 	pub render_params: RenderParams,
+
+	pub(crate) _computed_size: ComputedSize,
 }
 
-impl Default for Flex<()> {
+impl<E: UiElementList + Default> Default for Flex<E> {
 	fn default() -> Self {
 		Self {
-			children: (),
+			children: E::default(),
 			direction: Axis::default(),
 			main_axis_alignment: MainAxisAlignment::default(),
 			main_axis_size: MainAxisSize::default(),
 			cross_axis_alignment: CrossAxisAlignment::default(),
-			computed_size: ComputedSize(DVec2::ZERO),
+			_computed_size: ComputedSize(DVec2::ZERO),
 			render_params: Default::default(),
 		}
 	}
@@ -322,10 +399,47 @@ impl<E: UiElementList> UiElement for Flex<E> {
 	fn render_params(&mut self) -> &mut RenderParams {
 		&mut self.render_params
 	}
+
+	fn render_self(&mut self, position: DVec2, renderer: &mut UiRenderer) {
+		self.children.render_all(position, renderer);
+	}
+}
+
+#[derive(Default)]
+pub struct TextNode {
+	text: super::text::TextLayoutCache,
+	render_params: RenderParams,
+
+	computed_size: ComputedSize,
+}
+impl TextNode {
+	pub fn new(cache: &mut super::text::FontCache, text: &str, font_name: &'static str, scale: f32) -> Self {
+		Self {
+			text: super::text::TextLayoutCache::new(cache, text, scale, font_name),
+			//render_params: RenderParams { flex: 1, ..default() },
+			..default()
+		}
+	}
+}
+impl UiElement for TextNode {
+	fn layout(&mut self, box_constraint: BoxConstraint) -> Size {
+		self.text.update_layout(box_constraint.max.x as f32);
+
+		Size(self.text.size.as_dvec2().max(box_constraint.min))
+	}
+
+	fn render_params(&mut self) -> &mut RenderParams {
+		&mut self.render_params
+	}
+
+	fn render_self(&mut self, pos: DVec2, renderer: &mut UiRenderer) {
+		self.text.render_glyphs(renderer.cache, pos.as_vec2(), renderer.instances);
+	}
 }
 
 mod tuple_impls {
-	use super::{BoxConstraint, RenderParams, Size, UiElement, UiElementList};
+	use super::{BoxConstraint, RenderParams, Size, UiElement, UiElementList, UiRenderer};
+	use glam::DVec2;
 	macro_rules! tuple {
 		($length:literal: $($x:ident=$index:tt),*) => {
 			impl<$($x:UiElement),*> UiElementList for ($($x,)*) {
@@ -344,11 +458,13 @@ mod tuple_impls {
 						_ => panic!("Index out of range: index={} length={}", index, self.len()),
 					}
 				}
+				fn render_all(&mut self, _position: DVec2, _renderer: &mut UiRenderer) {
+					$(self.$index.render(_position, _renderer);)*
+				}
 			}
 		};
 	}
 	tuple!(0 :);
-	tuple!(1 : A=0);
 	tuple!(2 : A=0, B=1);
 	tuple!(3 : A=0, B=1, C=2);
 	tuple!(4 : A=0, B=1, C=2, D=3);
@@ -364,8 +480,28 @@ mod tuple_impls {
 	tuple!(14: A=0, B=1, C=2, D=3, E=4, F=5, G=6, H=7, I=8, J=9, K=10, L=11, M=12, N=13);
 	tuple!(15: A=0, B=1, C=2, D=3, E=4, F=5, G=6, H=7, I=8, J=9, K=10, L=11, M=12, N=13, O=14);
 	tuple!(16: A=0, B=1, C=2, D=3, E=4, F=5, G=6, H=7, I=8, J=9, K=10, L=11, M=12, N=13, O=14, P=15);
+
+	impl<A: UiElement> UiElementList for A {
+		fn len(&self) -> usize {
+			1
+		}
+		fn render_params(&mut self, index: usize) -> &mut RenderParams {
+			match index {
+				0 => self.render_params(),
+				_ => panic!("Index out of range: index={} length={}", index, self.len()),
+			}
+		}
+		fn layout_nth(&mut self, index: usize, _box_constraint: BoxConstraint) -> Size {
+			match index {
+				0 => self.layout(_box_constraint),
+				_ => panic!("Index out of range: index={} length={}", index, self.len()),
+			}
+		}
+		fn render_all(&mut self, position: DVec2, renderer: &mut UiRenderer) {
+			self.render(position, renderer);
+		}
+	}
 }
-pub use tuple_impls::*;
 
 #[test]
 fn my_own_layout() {

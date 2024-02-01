@@ -4,3 +4,5 @@
 *client_secret.txt
 *.log
 assets/icons/*
+/hexa
+

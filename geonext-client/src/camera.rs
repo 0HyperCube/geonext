@@ -26,6 +26,14 @@ impl Default for Camera {
 impl Camera {
 	/// Move the camera by a coordinate in screen space (not very pracise)
 	pub fn move_by(&mut self, screen: Vec2) {
+		// let px_nds = (normalised_mouse - 0.5) * Vec2::new(2., -2.);
+		// //let px_nds = Vec2::ZERO;
+		// let point_nds = px_nds.extend(-1.);
+		// let mut dir_eye = projection.inverse() * point_nds.extend(1.);
+		// dir_eye.w = 0.;
+		// let ray_direction = (view.inverse() * dir_eye).truncate().normalize();
+		// let ray_origin = view.inverse().w_axis.truncate();
+
 		self.position += (screen * self.zoom) / 10.
 	}
 

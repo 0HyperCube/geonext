@@ -7,3 +7,8 @@ edition = "2021"
 
 [dependencies]
 serde = { version = "1", default-features = false, features = ["derive", "std"] }
+glam = { version = "0.24", features = ["glam-assert"] }
+log = "*"
+
+[dev-dependencies]
+bincode = "1.3"

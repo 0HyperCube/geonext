@@ -21,7 +21,7 @@ export function load_asset(asset){
 			document.getElementById("errorreason").innerText = "Error fetching assets: " + e;
 			return;
 		}
-		with_assets(asset, code);
+		with_assets(asset);
 	};
 
 	

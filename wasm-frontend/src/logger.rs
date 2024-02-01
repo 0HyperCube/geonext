@@ -26,12 +26,13 @@ impl log::Log for SimpleLogger {
 
 	fn log(&self, record: &Record) {
 		if self.enabled(record.metadata()) {
+			let value = format!("{}:{}: {}", record.file().unwrap_or("unknown"), record.line().unwrap_or(0), record.args());
 			match record.level() {
-				Level::Error => error(&format!("{}", record.args())),
-				Level::Warn => warn(&format!("{}", record.args())),
-				Level::Info => info(&format!("{}", record.args())),
-				Level::Debug => debug(&format!("{}", record.args())),
-				Level::Trace => trace(&format!("{}", record.args())),
+				Level::Error => error(&value),
+				Level::Warn => warn(&value),
+				Level::Info => info(&value),
+				Level::Debug => debug(&value),
+				Level::Trace => trace(&value),
 			}
 		}
 	}

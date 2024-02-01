@@ -1,3 +1,4 @@
+use geonext_shared::ServerMessage;
 use glam::{IVec2, UVec2, Vec2};
 
 use crate::GameState;
@@ -46,6 +47,7 @@ pub enum EventType {
 	KeyUp(String),
 	Resize(UVec2),
 	Update,
+	Message(ServerMessage),
 }
 
 #[derive(Debug, Default)]

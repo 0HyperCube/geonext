@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use geonext_shared::{territories::Territories, ServerMessage};
 use glam::Mat4;
 pub use glam::{IVec2, UVec2, Vec2};
 use renderer::OpenGl;
@@ -49,6 +50,7 @@ impl GameState {
 		self.camera.position = self.terrain.size.as_vec2() / 2.;
 
 		event_layers.push(Self::update_camera);
+		event_layers.push(Self::update_map);
 		event_layers.push(Self::hover);
 	}
 	pub fn projection_mat(&self) -> Mat4 {
@@ -100,6 +102,15 @@ impl GameState {
 		}
 	}
 
+	fn update_map(&mut self, event: &EventType) -> bool {
+		let EventType::Message(ServerMessage::Map(map)) = event else {
+			return false;
+		};
+		self.map.borders = Territories::from_rle(map);
+		self.map.updated = true;
+		true
+	}
+
 	fn hover(&mut self, event: &EventType) -> bool {
 		if let EventType::PointerMove(_delta) = event {
 			self.map.update_hover(self.projection_mat(), self.view_mat(), self.input.mouse_pos.as_vec2() / self.viewport.as_vec2());
@@ -128,7 +139,7 @@ impl Application {
 		let mut renderer = OpenGl::new(context);
 		game_state.map.load(assets.take("map"));
 		game_state.terrain.load(&assets.get("heightmap"));
-		let (vertices, indices) = game_state.map.generate_terrain();
+		let (vertices, indices) = game_state.map.height_map.generate_terrain();
 		renderer.init(&vertices, &indices, &game_state)?;
 		renderer.font.add_font(&assets, "regular");
 
@@ -147,6 +158,7 @@ impl Application {
 		self.game_state.time.update_time(time);
 		self.event(EventType::Update);
 		self.renderer.rerender(&self.game_state);
+		self.game_state.map.updated = false;
 		//Mat4::orthographic_rh_gl(left, right, bottom, top, near, far)
 
 		// self.canvas.set_size(width, height, dpi_factor as f32);

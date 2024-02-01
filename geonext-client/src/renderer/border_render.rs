@@ -1,9 +1,10 @@
 use super::program::Program;
-use crate::{
-	map::{Channel, HexCoord, Map},
-	ErrorKind, GameState,
+use crate::{map::Map, ErrorKind, GameState};
+use geonext_shared::{
+	map_loader::{Channel, HeightMap, HexCoord},
+	territories::CountryId,
 };
-use glam::{IVec2, Mat4, UVec2, Vec2, Vec3, Vec4};
+use glam::{Mat4, UVec2, Vec2, Vec3};
 use glow::{Context, HasContext};
 use std::{collections::HashSet, rc::Rc};
 
@@ -15,78 +16,85 @@ pub struct BorderRender {
 }
 
 impl BorderRender {
+	fn trace_country(start_hex: HexCoord, map: &Map, index: &mut u32, country_id: CountryId, verts: &mut Vec<(Vec3, Vec3, Vec3, Vec2)>, indices: &mut Vec<u32>, visited: &mut HashSet<HexCoord>) {
+		let [primary, secondary] = country_id.colours();
+		let mut direction = HexCoord::TOP_LEFT;
+		let mut current_hex = start_hex;
+		let mut current_height = HeightMap::elevation_to_z(map.height_map.sample_at(Channel::TOPO, current_hex.to_offset().as_uvec2()));
+
+		let mut started = false;
+		let start_index = *index;
+		while !(direction == HexCoord::TOP_LEFT && current_hex == start_hex) || !started {
+			let start_corner = current_hex.corner(direction.rotate_anticlockwise());
+			let middle_corner = current_hex.corner(direction);
+			let middle_height = current_height;
+
+			let proposed_offset = (current_hex + direction).to_offset();
+			if map.height_map.in_bounds(proposed_offset) && country_id == map.borders.country_id(proposed_offset.as_uvec2()) {
+				current_hex = current_hex + direction;
+				current_height = HeightMap::elevation_to_z(map.height_map.sample_at(Channel::TOPO, current_hex.to_offset().as_uvec2()));
+				direction = direction.rotate_anticlockwise();
+			} else {
+				direction = direction.rotate_clockwise();
+			}
+
+			let end_corner = current_hex.corner(direction);
+			let real_direction = ((end_corner - middle_corner).normalize() + (middle_corner - start_corner).normalize()) / 2.;
+			let perpendicular_direction = Vec2::new(-real_direction.y, real_direction.x) * 0.2;
+
+			verts.push((middle_corner.extend(middle_height), primary, secondary, Vec2::new(0., 0.)));
+			verts.push((middle_corner.extend(middle_height) + perpendicular_direction.extend(0.), primary, secondary, Vec2::new(1., 1.)));
+			verts.push((middle_corner.extend(current_height), primary, secondary, Vec2::new(0., 0.)));
+			verts.push((middle_corner.extend(current_height) + perpendicular_direction.extend(0.), primary, secondary, Vec2::new(1., 1.)));
+
+			if started {
+				indices.extend([*index - 2, *index - 1, *index, *index, *index - 1, *index + 1]);
+				indices.extend([*index, *index + 1, *index + 2, *index + 2, *index + 1, *index + 3]);
+			}
+			*index += 4;
+
+			if direction == HexCoord::TOP_LEFT {
+				visited.insert(current_hex);
+			}
+			started = true;
+		}
+		if *index != start_index {
+			indices.extend([start_index, start_index + 1, *index - 2, *index - 2, start_index + 1, *index - 1]);
+		}
+	}
+
 	fn map_gen(map: &Map) -> (Vec<(Vec3, Vec3, Vec3, Vec2)>, Vec<u32>) {
 		let mut indices = Vec::new();
 
-		let primary = Vec3::new(1., 0., 0.);
-		let secondary = Vec3::new(0., 0., 1.);
 		let mut verts = Vec::new();
 		let mut index = 0;
 
 		let mut visited = HashSet::new();
-		for y in 0..map.height {
-			let mut previous_name_index = None;
-			for x in 0..map.width {
-				let name_index = map.sample_at(Channel::NAME, UVec2::new(x, y));
-				if Some(name_index) == previous_name_index {
+		for y in 0..map.borders.height() {
+			let mut previous_country_id = None;
+			for x in 0..map.borders.width() {
+				let country_id = map.borders.country_id(UVec2::new(x, y));
+				if Some(country_id) == previous_country_id {
 					continue;
 				}
-				previous_name_index = Some(name_index);
+				previous_country_id = Some(country_id);
+				if country_id == CountryId::SEA {
+					continue;
+				}
+
 				let start_hex = HexCoord::from_offset(x as i32, y as i32);
 				if visited.contains(&start_hex) {
 					continue;
 				}
 
-				let mut direction = HexCoord::TOP_LEFT;
-				let mut current_hex = start_hex;
-				let mut current_height = Map::elevation_to_z(map.sample_at(Channel::TOPO, current_hex.to_offset().as_uvec2()));
-
-				let mut started = false;
-				let start_index = index;
-				while !(direction == HexCoord::TOP_LEFT && current_hex == start_hex) || !started {
-					let start_corner = current_hex.corner(direction.rotate_anticlockwise());
-					let middle_corner = current_hex.corner(direction);
-					let middle_height = current_height;
-
-					let proposed_offset = (current_hex + direction).to_offset();
-					if map.in_bounds(proposed_offset) && name_index == map.sample_at(Channel::NAME, proposed_offset.as_uvec2()) {
-						current_hex = current_hex + direction;
-						current_height = Map::elevation_to_z(map.sample_at(Channel::TOPO, current_hex.to_offset().as_uvec2()));
-						direction = direction.rotate_anticlockwise();
-					} else {
-						direction = direction.rotate_clockwise();
-					}
-
-					let end_corner = current_hex.corner(direction);
-					let real_direction = ((end_corner - middle_corner).normalize() + (middle_corner - start_corner).normalize()) / 2.;
-					let perpendicular_direction = Vec2::new(-real_direction.y, real_direction.x) * 0.2;
-
-					verts.push((middle_corner.extend(middle_height), primary, secondary, Vec2::new(0., 0.)));
-					verts.push((middle_corner.extend(middle_height) + perpendicular_direction.extend(0.), primary, secondary, Vec2::new(1., 1.)));
-					verts.push((middle_corner.extend(current_height), primary, secondary, Vec2::new(0., 0.)));
-					verts.push((middle_corner.extend(current_height) + perpendicular_direction.extend(0.), primary, secondary, Vec2::new(1., 1.)));
-
-					if started {
-						indices.extend([index - 2, index - 1, index, index, index - 1, index + 1]);
-						indices.extend([index, index + 1, index + 2, index + 2, index + 1, index + 3]);
-					}
-					index += 4;
-
-					if direction == HexCoord::TOP_LEFT {
-						visited.insert(current_hex);
-					}
-					started = true;
-				}
-				if index != start_index {
-					indices.extend([start_index, start_index + 1, index - 2, index - 2, start_index + 1, index - 1]);
-				}
+				Self::trace_country(start_hex, map, &mut index, country_id, &mut verts, &mut indices, &mut visited);
 			}
 		}
 		(verts, indices)
 	}
 
 	pub unsafe fn new(context: Rc<Context>, map: &Map) -> Result<Self, ErrorKind> {
-		info!("Width {} height {}", map.width, map.height);
+		info!("Width {} height {}", map.height_map.width, map.height_map.height);
 		let (verts, indices) = Self::map_gen(map);
 
 		let indicies_count = indices.len();

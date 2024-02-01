@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
-use fontdue::{Font, Metrics};
-use glam::{UVec2, Vec2};
+use fontdue::{Font, LineMetrics, Metrics};
+use glam::{DVec2, UVec2, Vec2};
 use glow::HasContext;
 
 use crate::{Assets, ErrorKind};
@@ -18,12 +18,17 @@ struct GlyphCache {
 	metrics: Metrics,
 }
 
-pub struct Text {
+#[derive(Default)]
+pub struct TextLayoutCache {
 	glyphs: Vec<GlyphCache>,
+	location: Vec<Vec2>,
+	scale: f32,
+	pub size: Vec2,
+	ascent: f32,
 }
 
-impl Text {
-	pub fn new(cache: &mut FontCache, text: &str, font_name: &'static str) -> Self {
+impl TextLayoutCache {
+	pub fn new(cache: &mut FontCache, text: &str, scale: f32, font_name: &'static str) -> Self {
 		unsafe { cache.context.bind_texture(glow::TEXTURE_2D, Some(cache.texture.unwrap())) };
 
 		let font: &Font = cache.parsed_fonts.0.get(font_name).expect("Tried to use unloaded font");
@@ -34,26 +39,30 @@ impl Text {
 		}
 
 		unsafe { cache.context.bind_texture(glow::TEXTURE_2D, None) };
-		Self { glyphs }
+		let LineMetrics { ascent, .. } = font.horizontal_line_metrics(18. * scale).unwrap();
+
+		Self {
+			glyphs,
+			scale,
+			ascent,
+			..Default::default()
+		}
 	}
-	pub fn render_glyphs(&self, cache: &mut FontCache, mut pos: Vec2, scale: f32, instances: <glow::Context as glow::HasContext>::Buffer) {
+	pub fn render_glyphs(&self, cache: &mut FontCache, pos: Vec2, instances: <glow::Context as glow::HasContext>::Buffer) {
 		unsafe { cache.context.bind_texture(glow::TEXTURE_2D, Some(cache.texture.unwrap())) };
 
 		let mut instanced_data = Vec::with_capacity(self.glyphs.len());
-		for glyph in &self.glyphs {
-			let render_pos = Vec2::new(pos.x + glyph.metrics.xmin as f32 * scale, pos.y - (glyph.metrics.height as f32 + glyph.metrics.ymin as f32) * scale);
+		for (glyph, &render_pos) in self.glyphs.iter().zip(self.location.iter()) {
 			let size = Vec2::new(glyph.metrics.width as f32, glyph.metrics.height as f32);
 
 			let texture_size = Vec2::splat(TEXTURE_SIZE as f32);
 			let uv_min = glyph.pos.as_vec2() / texture_size;
 			let uv_max = (glyph.pos.as_vec2() + size) / texture_size;
 
-			let size = size * scale;
+			let size = size * self.scale;
 
-			let verticies = [(render_pos, size), (uv_min, uv_max - uv_min)];
+			let verticies = [(render_pos + pos, size), (uv_min, uv_max - uv_min)];
 			instanced_data.push(verticies);
-			// now advance cursors for next glyph
-			pos += Vec2::new(glyph.metrics.advance_width, glyph.metrics.advance_height) * scale;
 		}
 
 		unsafe {
@@ -70,6 +79,34 @@ impl Text {
 			cache.context.draw_arrays_instanced(glow::TRIANGLES, 0, 6, instance_count);
 		}
 		unsafe { cache.context.bind_texture(glow::TEXTURE_2D, None) };
+	}
+
+	fn layout(glyphs: &[GlyphCache], scale: f32, max_x: f32, ascent: f32) -> (Vec<Vec2>, Vec2) {
+		let mut locations = Vec::with_capacity(glyphs.len());
+		let mut pos = Vec2::new(0., ascent);
+
+		let mut size = Vec2::ZERO;
+		for glyph in glyphs {
+			let far_x = pos.x + (glyph.metrics.xmin as f32 + glyph.metrics.width as f32) * scale;
+			if far_x > max_x {
+				pos.x = 0.;
+				pos.y += ascent;
+			}
+
+			let render_pos = Vec2::new(pos.x + glyph.metrics.xmin as f32 * scale, pos.y - (glyph.metrics.height as f32 + glyph.metrics.ymin as f32) * scale);
+			locations.push(render_pos);
+
+			let extreme = Vec2::new(pos.x + (glyph.metrics.xmin as f32 + glyph.metrics.width as f32) * scale, pos.y - glyph.metrics.ymin as f32 * scale);
+			size = size.max(extreme);
+
+			pos += Vec2::new(glyph.metrics.advance_width, glyph.metrics.advance_height) * scale;
+		}
+
+		(locations, size)
+	}
+
+	pub fn update_layout(&mut self, max_x: f32) {
+		(self.location, self.size) = Self::layout(&self.glyphs, self.scale, max_x, self.ascent);
 	}
 }
 
@@ -128,8 +165,8 @@ impl FontCache {
 
 	fn load_glyph<'a>(glyphs: &'a mut HashMap<char, GlyphCache>, atlas: &mut Atlas, context: &Rc<glow::Context>, c: char, font: &Font) -> &'a GlyphCache {
 		glyphs.entry(c).or_insert_with(|| {
-			// Rasterize and get the layout metrics for the letter 'g' at 17px.
-			let (metrics, bitmap) = font.rasterize(c, 58.);
+			// Rasterize and get the layout metrics for the letter 'g' at 18px.
+			let (metrics, bitmap) = font.rasterize(c, 18.);
 			let pos = atlas
 				.allocate_rect(UVec2::new(metrics.width as u32 + 1, metrics.height as u32 + 1))
 				.expect("Too many glyphs (todo: new texture or something)");

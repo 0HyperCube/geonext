@@ -16,6 +16,7 @@ http-types = { version = "2", default-features = false }
 surf = { version = "2", default-features = false, features = ["h1-client"] }
 form_urlencoded = { version = "1", default-features = false}
 serde_json = { version = "1", default-features = false }
+bincode = "1.3"
 anyhow = { version = "1.0", default-features = false }
 log = "0.4"
 simplelog = "*"
