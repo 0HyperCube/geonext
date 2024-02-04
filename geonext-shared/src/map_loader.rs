@@ -1,5 +1,5 @@
 use core::ops::Range;
-use glam::{IVec2, UVec2, Vec2, Vec3};
+use glam::{DVec2, IVec2, UVec2, Vec2, Vec3};
 
 #[derive(Debug, Default)]
 pub struct HeightMap {
@@ -203,6 +203,12 @@ impl HeightMap {
 		(if elevation > 240 { -0.01 } else { elevation as f32 / 255. }) * 5.
 	}
 
+	pub fn hex_centre(&self, x: u32, y: u32) -> Vec3 {
+		HexCoord::from_offset(x as i32, y as i32)
+			.centre()
+			.extend(Self::elevation_to_z(self.sample_at(Channel::TOPO, UVec2::new(x, y))))
+	}
+
 	pub fn generate_terrain(&self) -> (Vec<f32>, Vec<u32>) {
 		assert!(!self.map.is_empty(), "Map should be populated");
 
@@ -213,6 +219,7 @@ impl HeightMap {
 
 		let push_vert = |colour: Vec3, verticies: &mut Vec<f32>, pos: Vec3| {
 			verticies.extend(pos.to_array());
+			verticies.extend(Vec3::Y.to_array());
 			verticies.extend(colour.to_array());
 		};
 

@@ -192,6 +192,7 @@ pub enum ErrorKind {
 	ProgramLinkError(String),
 	VertexArray(String),
 	IndexArray(String),
+	InstanceArray(String),
 }
 
 impl core::fmt::Display for ErrorKind {
@@ -206,6 +207,7 @@ impl core::fmt::Display for ErrorKind {
 				ErrorKind::ProgramLinkError(x) => x,
 				ErrorKind::VertexArray(x) => x,
 				ErrorKind::IndexArray(x) => x,
+				ErrorKind::InstanceArray(x) => x,
 			}
 		)
 	}

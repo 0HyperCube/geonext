@@ -7,6 +7,7 @@ precision mediump float;
 out vec4 FragColor;
 
 in vec4 vertexColour;
+in vec3 normal;
 
 float near = 0.1; 
 float far  = 100.0; 
@@ -19,5 +20,6 @@ float LinearDepth(float depth) {
 void main()
 {
 	float depth = LinearDepth(gl_FragCoord.z) / far;
-	FragColor = vertexColour;
+	vec3 lightDir = normalize(vec3(1));
+	FragColor = vertexColour * vec4(vec3(max(dot(normal, lightDir), 0.3)), 1);
 }

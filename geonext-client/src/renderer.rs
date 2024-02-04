@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+use geonext_shared::map_loader::HexCoord;
+use glam::Vec3;
 use glow::{Context, HasContext};
 
 use crate::{ErrorKind, GameState};
@@ -7,7 +9,7 @@ use crate::{ErrorKind, GameState};
 mod program;
 use program::*;
 
-use self::{border_render::BorderRender, terrain_render::TerrainRender, text_render::TextRender};
+use self::{border_render::BorderRender, terrain_render::SceneRender, text_render::TextRender};
 mod atlas;
 mod border_render;
 mod terrain_render;
@@ -52,7 +54,11 @@ impl Programs {
 
 /// Contains the glow opengl state
 pub struct OpenGl {
-	terrain: Option<TerrainRender>,
+	terrain: Option<SceneRender>,
+	sawmill: Option<SceneRender>,
+	mine: Option<SceneRender>,
+	farm: Option<SceneRender>,
+	army: Option<SceneRender>,
 	text: Option<TextRender>,
 	border: Option<BorderRender>,
 	programs: Option<Programs>,
@@ -67,6 +73,10 @@ impl OpenGl {
 		let context = Rc::new(context);
 		Self {
 			terrain: None,
+			sawmill: None,
+			farm: None,
+			mine: None,
+			army: None,
 			text: None,
 			border: None,
 			programs: None,
@@ -95,7 +105,23 @@ impl OpenGl {
 		self.setup_opengl();
 		self.font.init()?;
 		self.programs = Some(Programs::load_shaders(&self.context)?);
-		unsafe { self.terrain = Some(TerrainRender::new(self.context.clone(), verts, indices)?) };
+
+		unsafe {
+			let (_, indices_data, _) = indices.align_to();
+			let (_, vert_data, _) = verts.align_to();
+			self.terrain = Some(SceneRender::new(self.context.clone(), vert_data, indices_data)?);
+		}
+
+		let to_scene = |dat: &[u8]| {
+			let len_vert = u32::from_le_bytes([dat[0], dat[1], dat[2], dat[3]]) as usize;
+			unsafe { SceneRender::new(self.context.clone(), &dat[8..][..len_vert], &dat[8..][len_vert..]) }
+		};
+
+		self.sawmill = Some(to_scene(include_bytes!("./../../assets/dat/sawmill.dat"))?);
+		self.farm = Some(to_scene(include_bytes!("./../../assets/dat/farm.dat"))?);
+		self.mine = Some(to_scene(include_bytes!("./../../assets/dat/mine.dat"))?);
+		self.army = Some(to_scene(include_bytes!("./../../assets/dat/army.dat"))?);
+
 		unsafe { self.text = Some(TextRender::new(self.context.clone())?) };
 		unsafe { self.border = Some(BorderRender::new(self.context.clone(), &game_state.map)?) };
 
@@ -124,13 +150,20 @@ impl OpenGl {
 			self.context.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
 		}
 		if let Some(terrain) = &self.terrain {
-			unsafe { terrain.render(&scene_program, game_state) };
+			unsafe { terrain.render(&scene_program, game_state, &[Vec3::ZERO]) };
 		}
 		if let Some(text) = &self.text {
 			unsafe { text.render(&text_program, game_state, &mut self.font) };
 		}
 		if let Some(border) = &self.border {
 			unsafe { border.render(&border_program, game_state) };
+		}
+		if let Some(sawmill) = &self.sawmill {
+			let val = (0..game_state.map.height_map.height)
+				.flat_map(|y| (0..game_state.map.height_map.width).map(move |x| game_state.map.height_map.hex_centre(x, y)))
+				.collect::<Vec<_>>();
+
+			unsafe { sawmill.render(&scene_program, game_state, &val) };
 		}
 	}
 
