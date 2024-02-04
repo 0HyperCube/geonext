@@ -2,7 +2,7 @@ use glam::{UVec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CountryId(u8);
+pub struct CountryId(pub u8);
 
 impl CountryId {
 	pub const SEA: Self = CountryId(254);

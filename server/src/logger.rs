@@ -16,8 +16,8 @@ pub fn init_logger() {
 struct SimpleLogger;
 
 impl log::Log for SimpleLogger {
-	fn enabled(&self, _metadata: &Metadata) -> bool {
-		true
+	fn enabled(&self, metadata: &Metadata) -> bool {
+		metadata.level() != log::Level::Trace
 	}
 
 	fn log(&self, record: &Record) {

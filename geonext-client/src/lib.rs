@@ -1,3 +1,4 @@
+#![feature(iter_repeat_n)]
 use std::collections::HashMap;
 
 use geonext_shared::{territories::Territories, ServerMessage};
@@ -107,6 +108,7 @@ impl GameState {
 			return false;
 		};
 		self.map.borders = Territories::from_rle(map);
+		info!("Map updated");
 		self.map.updated = true;
 		true
 	}

@@ -85,6 +85,7 @@ async fn main() -> Result<(), anyhow::Error> {
 			use futures_util::stream::StreamExt;
 			let (mut tx, mut rx) = current_websocket.split();
 			let mut stream = Stream { stream: &mut tx };
+			info!("Send map");
 			if let Err(e) = stream.send(&ServerMessage::Map(game.lock().await.territories.to_rle())).await {
 				error!("Failed to send map {e}")
 			}

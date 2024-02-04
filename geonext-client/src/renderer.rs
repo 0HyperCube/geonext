@@ -146,15 +146,13 @@ impl OpenGl {
 			}
 		}
 		unsafe {
-			self.context.clear_color(0.207843137, 0.207843137, 0.207843137, 1.);
+			self.context.clear_color(28. / 255., 27. / 255., 34. / 255., 1.);
 			self.context.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
 		}
 		if let Some(terrain) = &self.terrain {
 			unsafe { terrain.render(&scene_program, game_state, &[Vec3::ZERO]) };
 		}
-		if let Some(text) = &self.text {
-			unsafe { text.render(&text_program, game_state, &mut self.font) };
-		}
+
 		if let Some(border) = &self.border {
 			unsafe { border.render(&border_program, game_state) };
 		}
@@ -164,6 +162,11 @@ impl OpenGl {
 				.collect::<Vec<_>>();
 
 			unsafe { sawmill.render(&scene_program, game_state, &val) };
+		}
+
+		// UI must be last so it doesn't cause artifact
+		if let Some(text) = &self.text {
+			unsafe { text.render(&text_program, game_state, &mut self.font) };
 		}
 	}
 

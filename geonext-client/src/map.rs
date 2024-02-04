@@ -1,6 +1,6 @@
 use geonext_shared::{
 	map_loader::{HeightMap, HexCoord},
-	territories::Territories,
+	territories::{CountryId, Territories},
 };
 use glam::{Mat4, UVec2, Vec2, Vec3};
 
@@ -40,6 +40,9 @@ impl Map {
 
 	pub fn hovered_name(&self) -> &str {
 		self.borders.get_name(self.borders.country_id(self.hovered))
+	}
+	pub fn hovered_country(&self) -> CountryId {
+		self.borders.country_id(self.hovered)
 	}
 }
 

@@ -88,6 +88,7 @@ impl Program {
 	}
 
 	/// Set a boolean uniform
+	#[track_caller]
 	pub fn set_bool(&self, name: &str, value: bool) {
 		unsafe {
 			let location = self.context.get_uniform_location(self.program, name).expect(&format!("failed to find location for bool '{name}'"));
@@ -95,15 +96,17 @@ impl Program {
 		}
 	}
 
-	/// Set an i32 uniform
-	pub fn set_int(&self, name: &str, value: i32) {
+	/// Set an u32 uniform
+	#[track_caller]
+	pub fn set_uint(&self, name: &str, value: u32) {
 		unsafe {
 			let location = self.context.get_uniform_location(self.program, name).expect(&format!("failed to find location for i32 '{name}'"));
-			self.context.uniform_1_i32(Some(&location), value);
+			self.context.uniform_1_u32(Some(&location), value);
 		}
 	}
 
 	/// Set an f32 uniform
+	#[track_caller]
 	pub fn set_float(&self, name: &str, value: f32) {
 		unsafe {
 			let location = self.context.get_uniform_location(self.program, name).expect(&format!("failed to find location for f32 '{name}'"));
@@ -112,6 +115,7 @@ impl Program {
 	}
 
 	/// Set a vec3 uniform
+	#[track_caller]
 	pub fn set_vec3(&self, name: &str, value: Vec3) {
 		unsafe {
 			let location = self.context.get_uniform_location(self.program, name).expect(&format!("failed to find location for vec3 '{name}'"));
@@ -120,6 +124,7 @@ impl Program {
 	}
 
 	/// Set a vec4 uniform
+	#[track_caller]
 	pub fn set_vec4(&self, name: &str, value: Vec4) {
 		unsafe {
 			let location = self.context.get_uniform_location(self.program, name).expect(&format!("failed to find location for vec4 '{name}'"));
@@ -128,6 +133,7 @@ impl Program {
 	}
 
 	/// Set a mat4 uniform
+	#[track_caller]
 	pub fn set_mat4(&self, name: &str, value: Mat4) {
 		unsafe {
 			let location = self.context.get_uniform_location(self.program, name).expect(&format!("failed to find location for mat4 '{name}'"));
